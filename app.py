@@ -63,6 +63,8 @@ def run_and_display_simulation(
             label='Max Net Worth', color='#ffa600', linestyle='--')
     ax.plot(months, results['p75_net_worth'],
             label='75th Percentile', color='#ffa600')
+    ax.plot(months, results['median_net_worth'],
+            label='Median Net Worth', color='#bc5090', linewidth=2)
     ax.plot(months, results['avg_net_worth'],
             label='Average Net Worth', color='#003f5c', linewidth=2)
     ax.plot(months, results['p25_net_worth'],
@@ -85,12 +87,13 @@ def run_and_display_simulation(
         'Month': months,
         'Min Net Worth': results['min_net_worth'],
         '25th Percentile': results['p25_net_worth'],
+        'Median Net Worth': results['median_net_worth'],
         'Avg Net Worth': results['avg_net_worth'],
         '75th Percentile': results['p75_net_worth'],
         'Max Net Worth': results['max_net_worth']
     })
 
-    for col in ['Min Net Worth', '25th Percentile', 'Avg Net Worth', '75th Percentile', 'Max Net Worth']:
+    for col in ['Min Net Worth', '25th Percentile', 'Median Net Worth', 'Avg Net Worth', '75th Percentile', 'Max Net Worth']:
         df[col] = df[col].map('${:,.2f}'.format)
 
     return (
@@ -349,8 +352,8 @@ with gr.Blocks(
             summary_text_output = gr.Markdown()
         plot_output = gr.Plot()
         with gr.Accordion("View Monthly Data", open=False) as monthly_data_accordion:
-            dataframe_output = gr.Dataframe(headers=["Month", "Min Net Worth", "25th Percentile", "Avg Net Worth", "75th Percentile", "Max Net Worth"], datatype=[
-                                            "number", "str", "str", "str", "str", "str"])
+            dataframe_output = gr.Dataframe(headers=["Month", "Min Net Worth", "25th Percentile", "Median Net Worth", "Avg Net Worth", "75th Percentile", "Max Net Worth"], datatype=[
+                                            "number", "str", "str", "str", "str", "str", "str"])
 
         with gr.Accordion("Get Gemini Analysis", open=False) as gemini_analysis_accordion:
             gemini_key = gr.Textbox(

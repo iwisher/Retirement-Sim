@@ -219,6 +219,7 @@ def run_simulation(inputs):
     results = {
         'max_net_worth': np.max(padded_simulations, axis=0),
         'p75_net_worth': np.percentile(padded_simulations, 75, axis=0),
+        'median_net_worth': np.median(padded_simulations, axis=0),
         'avg_net_worth': np.mean(padded_simulations, axis=0),
         'p25_net_worth': np.percentile(padded_simulations, 25, axis=0),
         'min_net_worth': np.min(padded_simulations, axis=0)
@@ -237,6 +238,7 @@ def plot_results(results):
     plt.figure(figsize=(12, 8))
     plt.plot(months, results['max_net_worth'], label='Max Net Worth', color='green', linestyle='--')
     plt.plot(months, results['p75_net_worth'], label='75th Percentile', color='green')
+    plt.plot(months, results['median_net_worth'], label='Median Net Worth', color='purple')
     plt.plot(months, results['avg_net_worth'], label='Average Net Worth', color='blue')
     plt.plot(months, results['p25_net_worth'], label='25th Percentile', color='red')
     plt.plot(months, results['min_net_worth'], label='Min Net Worth', color='red', linestyle='--')
