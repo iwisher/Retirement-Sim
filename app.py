@@ -9,6 +9,7 @@ import google.generativeai as genai
 def run_and_display_simulation(
     # Core Inputs
     initial_portfolio_value, initial_cost_basis, annual_spending,
+    monthly_passive_income, quarterly_dividend_yield, federal_tax_free_gain_limit,
     annual_return, annual_std_dev, margin_rate, margin_rate_std_dev,
     margin_limit, simulation_count, tax_harvesting_profit_threshold,
     # New Distribution Inputs
@@ -22,14 +23,14 @@ def run_and_display_simulation(
         'initial_portfolio_value': initial_portfolio_value,
         'initial_cost_basis': initial_cost_basis,
         'annual_spending': annual_spending,
-        'monthly_passive_income': 1000,  # Hardcoded as per original UI
+        'monthly_passive_income': monthly_passive_income,
         'portfolio_annual_return': annual_return / 100,
         'portfolio_annual_std_dev': annual_std_dev / 100,
-        'quarterly_dividend_yield': 0.01,  # Hardcoded as per original UI
+        'quarterly_dividend_yield': quarterly_dividend_yield / 100,
         'margin_loan_annual_avg_interest_rate': margin_rate / 100,
         'margin_loan_annual_interest_rate_std_dev': margin_rate_std_dev / 100,
         'brokerage_margin_limit': margin_limit / 100,
-        'federal_tax_free_gain_limit': 123250,  # Hardcoded
+        'federal_tax_free_gain_limit': federal_tax_free_gain_limit,
         'tax_harvesting_profit_threshold': tax_harvesting_profit_threshold / 100,
         'num_simulations': int(simulation_count),
         # New distribution params
@@ -120,6 +121,7 @@ def get_gemini_analysis(
     api_key, summary_text, df,
     # Core Inputs
     initial_portfolio_value, initial_cost_basis, annual_spending,
+    monthly_passive_income, quarterly_dividend_yield, federal_tax_free_gain_limit,
     annual_return, annual_std_dev, margin_rate, margin_rate_std_dev,
     margin_limit, simulation_count, tax_harvesting_profit_threshold,
     # Distribution Inputs
@@ -154,15 +156,18 @@ def get_gemini_analysis(
         - Initial Portfolio Value: ${initial_portfolio_value:,.2f}
         - Initial Cost Basis: ${initial_cost_basis:,.2f}
         - Annual Spending: ${annual_spending:,.2f}
+        - Monthly Passive Income: ${monthly_passive_income:,.2f}
 
         **Market and Loan Assumptions:**
         - Portfolio Annual Average Return: {annual_return}% (Distribution: {return_dist_model}, DF: {return_dist_df if return_dist_model == "Student's t" else 'N/A'})
         - Portfolio Annual Standard Deviation: {annual_std_dev}%
+        - Quarterly Dividend Yield: {quarterly_dividend_yield}%
         - Margin Loan Annual Average Interest Rate: {margin_rate}% (Distribution: {interest_rate_dist_model}, DF: {interest_rate_dist_df if interest_rate_dist_model == "Student's t" else 'N/A'})
         - Margin Loan Annual Interest Rate Std. Dev.: {margin_rate_std_dev}%
 
         **Strategy Parameters:**
         - Brokerage Margin Limit: {margin_limit}% of portfolio value
+        - Federal Tax-Free Gain Limit: ${federal_tax_free_gain_limit:,.2f}
         - Tax Harvesting Profit Threshold: {tax_harvesting_profit_threshold}%
         - Number of Simulations: {simulation_count}
         """
@@ -233,6 +238,10 @@ with gr.Blocks(
                                            info="The original value of your assets for tax purposes.")
             annual_spending = gr.Number(value=120000, label="ANNUAL SPENDING ($)", elem_classes="input-card",
                                         info="The total amount of money you plan to spend annually.")
+        with gr.Row():
+            monthly_passive_income = gr.Number(value=1000, label="MONTHLY PASSIVE INCOME ($)", elem_classes="input-card", info="Your monthly income from sources other than the portfolio.")
+            quarterly_dividend_yield = gr.Number(value=1.0, label="QUARTERLY DIVIDEND YIELD (%)", elem_classes="input-card", info="The quarterly dividend yield of your portfolio.")
+            federal_tax_free_gain_limit = gr.Number(value=123250, label="FEDERAL TAX-FREE GAIN LIMIT ($)", elem_classes="input-card", info="The annual limit for tax-free capital gains.")
         with gr.Row():
             annual_return = gr.Number(value=10, label="AVG. ANNUAL RETURN (%)", elem_classes="input-card",
                                       info="The expected average annual return of your portfolio.")
@@ -388,6 +397,7 @@ with gr.Blocks(
         fn=run_and_display_simulation,
         inputs=[
             initial_portfolio_value, initial_cost_basis, annual_spending,
+            monthly_passive_income, quarterly_dividend_yield, federal_tax_free_gain_limit,
             annual_return, annual_std_dev, margin_rate, margin_rate_std_dev,
             margin_limit, simulation_count, tax_harvesting_profit_threshold,
             return_dist_model, return_dist_df,
@@ -415,6 +425,7 @@ with gr.Blocks(
         inputs=[
             gemini_key, summary_text_output, dataframe_output,
             initial_portfolio_value, initial_cost_basis, annual_spending,
+            monthly_passive_income, quarterly_dividend_yield, federal_tax_free_gain_limit,
             annual_return, annual_std_dev, margin_rate, margin_rate_std_dev,
             margin_limit, simulation_count, tax_harvesting_profit_threshold,
             return_dist_model, return_dist_df,
