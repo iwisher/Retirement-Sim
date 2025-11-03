@@ -218,10 +218,12 @@ def run_simulation(inputs):
 
     results = {
         'max_net_worth': np.max(padded_simulations, axis=0),
+        'p99_net_worth': np.percentile(padded_simulations, 99, axis=0),
         'p75_net_worth': np.percentile(padded_simulations, 75, axis=0),
         'median_net_worth': np.median(padded_simulations, axis=0),
         'avg_net_worth': np.mean(padded_simulations, axis=0),
         'p25_net_worth': np.percentile(padded_simulations, 25, axis=0),
+        'p01_net_worth': np.percentile(padded_simulations, 1, axis=0),
         'min_net_worth': np.min(padded_simulations, axis=0)
     }
 
@@ -237,10 +239,12 @@ def plot_results(results):
     months = range(1, len(results['avg_net_worth']) + 1)
     plt.figure(figsize=(12, 8))
     plt.plot(months, results['max_net_worth'], label='Max Net Worth', color='green', linestyle='--')
+    plt.plot(months, results['p99_net_worth'], label='99th Percentile', color='green', linestyle='-.')
     plt.plot(months, results['p75_net_worth'], label='75th Percentile', color='green')
     plt.plot(months, results['median_net_worth'], label='Median Net Worth', color='purple')
     plt.plot(months, results['avg_net_worth'], label='Average Net Worth', color='blue')
     plt.plot(months, results['p25_net_worth'], label='25th Percentile', color='red')
+    plt.plot(months, results['p01_net_worth'], label='1th Percentile', color='red', linestyle='-.')
     plt.plot(months, results['min_net_worth'], label='Min Net Worth', color='red', linestyle='--')
     plt.fill_between(months, results['p25_net_worth'], results['p75_net_worth'], color='gray', alpha=0.2, label='Interquartile Range')
     plt.title('Monte Carlo Retirement Simulation')
@@ -259,22 +263,22 @@ def main():
     """
     # --- User-Defined Inputs ---
     inputs = {
-        'initial_portfolio_value': 1000000,
-        'initial_cost_basis': 700000,
-        'annual_spending': 120000,
+        'initial_portfolio_value': 2000000,
+        'initial_cost_basis': 1400000,
+        'annual_spending': 130000,
         'monthly_passive_income': 1000,
-        'portfolio_annual_return': 0.10,
+        'portfolio_annual_return': 0.08,
         'portfolio_annual_std_dev': 0.19,
-        'quarterly_dividend_yield': 0.01,
+        'quarterly_dividend_yield': 0.02,
         'margin_loan_annual_avg_interest_rate': 0.06,
-        'margin_loan_annual_interest_rate_std_dev': 0.015,
-        'brokerage_margin_limit': 0.50,
+        'margin_loan_annual_interest_rate_std_dev': 0.05,
+        'brokerage_margin_limit': 0.70,
         'federal_tax_free_gain_limit': 123250,
         'tax_harvesting_profit_threshold': 0.30,
-        'num_simulations': 1000,
-        'return_distribution_model': 'Normal',
+        'num_simulations': 10000,
+        'return_distribution_model': 'Laplace',
         'return_distribution_df': 5,
-        'interest_rate_distribution_model': 'Normal',
+        'interest_rate_distribution_model': 'Laplace',
         'interest_rate_distribution_df': 5
     }
 
