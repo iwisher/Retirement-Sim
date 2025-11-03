@@ -60,13 +60,17 @@ def run_and_display_simulation(
     fig, ax = plt.subplots(figsize=(10, 6))
     months = range(1, len(results['avg_net_worth']) + 1)
     ax.plot(months, results['max_net_worth'],
-            label='Max Net Worth', color='#ffa600')
+            label='Max Net Worth', color='#ffa600', linestyle='--')
+    ax.plot(months, results['p75_net_worth'],
+            label='75th Percentile', color='#ffa600')
     ax.plot(months, results['avg_net_worth'],
             label='Average Net Worth', color='#003f5c', linewidth=2)
+    ax.plot(months, results['p25_net_worth'],
+            label='25th Percentile', color='#ff6361')
     ax.plot(months, results['min_net_worth'],
-            label='Min Net Worth', color='#ff6361')
-    ax.fill_between(months, results['min_net_worth'],
-                    results['max_net_worth'], color='gray', alpha=0.1)
+            label='Min Net Worth', color='#ff6361', linestyle='--')
+    ax.fill_between(months, results['p25_net_worth'],
+                    results['p75_net_worth'], color='gray', alpha=0.2, label='Interquartile Range (25-75%)')
     ax.set_title('Simulated Net Worth Over 10 Years', fontsize=16)
     ax.set_xlabel('Month')
     ax.set_ylabel('Net Worth ($)')
@@ -80,11 +84,13 @@ def run_and_display_simulation(
     df = pd.DataFrame({
         'Month': months,
         'Min Net Worth': results['min_net_worth'],
+        '25th Percentile': results['p25_net_worth'],
         'Avg Net Worth': results['avg_net_worth'],
+        '75th Percentile': results['p75_net_worth'],
         'Max Net Worth': results['max_net_worth']
     })
 
-    for col in ['Min Net Worth', 'Avg Net Worth', 'Max Net Worth']:
+    for col in ['Min Net Worth', '25th Percentile', 'Avg Net Worth', '75th Percentile', 'Max Net Worth']:
         df[col] = df[col].map('${:,.2f}'.format)
 
     return (
@@ -343,8 +349,8 @@ with gr.Blocks(
             summary_text_output = gr.Markdown()
         plot_output = gr.Plot()
         with gr.Accordion("View Monthly Data", open=False) as monthly_data_accordion:
-            dataframe_output = gr.Dataframe(headers=["Month", "Min Net Worth", "Avg Net Worth", "Max Net Worth"], datatype=[
-                                            "number", "str", "str", "str"])
+            dataframe_output = gr.Dataframe(headers=["Month", "Min Net Worth", "25th Percentile", "Avg Net Worth", "75th Percentile", "Max Net Worth"], datatype=[
+                                            "number", "str", "str", "str", "str", "str"])
 
         with gr.Accordion("Get Gemini Analysis", open=False) as gemini_analysis_accordion:
             gemini_key = gr.Textbox(
