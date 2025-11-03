@@ -157,17 +157,18 @@ def run_simulation(inputs):
                             value_to_harvest = long_term_value
 
                         harvested_basis = (value_to_harvest / long_term_value) * long_term_basis
+                        actual_gain_harvested = value_to_harvest - harvested_basis
                         long_term_value -= value_to_harvest
                         long_term_basis -= harvested_basis
                         short_term_value += value_to_harvest
                         short_term_basis += value_to_harvest
-                        gains_realized_this_year += gains_to_harvest
+                        gains_realized_this_year += actual_gain_harvested #gains_to_harvest
 
                 # Calculate and "Pay" California Tax
                 total_investment_income = gains_realized_this_year + total_dividend_income_this_year
                 net_investment_income = total_investment_income - total_margin_interest_paid_this_year
                 # Simplified CA tax calculation
-                ca_tax_due = net_investment_income * 0.093
+                ca_tax_due = max(0, net_investment_income * 0.093) #net_investment_income * 0.093
                 margin_loan += ca_tax_due
 
                 # Reset annual counters and set new margin rate
@@ -186,8 +187,8 @@ def run_simulation(inputs):
             monthly_net_worth.append(net_worth)
 
             # Stop simulation if average net worth is below zero
-            if all_simulations_net_worth and np.mean([sim[-1] for sim in all_simulations_net_worth if sim]) < 0:
-                break
+            # if all_simulations_net_worth and np.mean([sim[-1] for sim in all_simulations_net_worth if sim]) < 0:
+            #     break
 
         all_simulations_net_worth.append(monthly_net_worth)
 
