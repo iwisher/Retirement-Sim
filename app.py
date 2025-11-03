@@ -232,9 +232,9 @@ with gr.Blocks(
     with gr.Accordion("Step 1: The Starting Point - Your Financial DNA", open=True):
         gr.Markdown("<p style='text-align: center; font-size: 1.1rem; font-family: Inter, sans-serif;'>The simulation begins with your unique parameters. Change any value below and run the simulation to see how it impacts your 10-year outlook.</p>")
         with gr.Row():
-            initial_portfolio_value = gr.Number(value=1000000, label="PORTFOLIO VALUE ($)",
+            initial_portfolio_value = gr.Number(value=2000000, label="PORTFOLIO VALUE ($)",
                                                 elem_classes="input-card", info="The starting value of your investment portfolio.")
-            initial_cost_basis = gr.Number(value=700000, label="COST BASIS ($)", elem_classes="input-card",
+            initial_cost_basis = gr.Number(value=1500000, label="COST BASIS ($)", elem_classes="input-card",
                                            info="The original value of your assets for tax purposes.")
             annual_spending = gr.Number(value=120000, label="ANNUAL SPENDING ($)", elem_classes="input-card",
                                         info="The total amount of money you plan to spend annually.")
@@ -250,11 +250,11 @@ with gr.Blocks(
             margin_rate = gr.Number(value=6, label="AVG. MARGIN RATE (%)", elem_classes="input-card",
                                     info="The average annual interest rate on your margin loan.")
         with gr.Row():
-            margin_rate_std_dev = gr.Number(value=1.5, label="MARGIN STD. DEV. (%)", elem_classes="input-card",
+            margin_rate_std_dev = gr.Number(value=5, label="MARGIN STD. DEV. (%)", elem_classes="input-card",
                                             info="The standard deviation of the margin loan interest rate.")
-            margin_limit = gr.Number(value=50, label="MARGIN BORROW LIMIT (%)", elem_classes="input-card",
+            margin_limit = gr.Number(value=55, label="MARGIN BORROW LIMIT (%)", elem_classes="input-card",
                                      info="The maximum percentage of your portfolio you are willing to borrow on margin.")
-            simulation_count = gr.Number(value=1000, label="# OF SIMULATIONS", elem_classes="input-card",
+            simulation_count = gr.Number(value=8000, label="# OF SIMULATIONS", elem_classes="input-card",
                                          info="The number of different market scenarios to simulate.")
         with gr.Row():
             tax_harvesting_profit_threshold = gr.Number(value=30, label="TAX HARVEST PROFIT THRESHOLD (%)",
