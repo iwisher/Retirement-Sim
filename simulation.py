@@ -64,8 +64,8 @@ def run_simulation(inputs):
         # --- Initialize scenario variables ---
         long_term_value = initial_portfolio_value
         long_term_basis = initial_cost_basis
-        short_term_value = 0
-        short_term_basis = 0
+        # A list of 12 tuples, each representing a monthly bucket of (value, basis)
+        short_term_monthly_buckets = [(0, 0)] * 12
         margin_loan = 0
 
         total_margin_interest_paid_this_year = 0
@@ -84,13 +84,13 @@ def run_simulation(inputs):
         for month in range(1, num_months + 1):
             # --- Monthly simulation loop ---
 
-            # Step 1: Asset Aging
-            aging_value = short_term_value / 12
-            aging_basis = short_term_basis / 12
-            short_term_value -= aging_value
-            short_term_basis -= aging_basis
-            long_term_value += aging_value
-            long_term_basis += aging_basis
+            # Step 1: Asset Aging (FIFO)
+            # Age out the oldest short-term bucket into the long-term portfolio
+            aged_value, aged_basis = short_term_monthly_buckets.pop(0)
+            long_term_value += aged_value
+            long_term_basis += aged_basis
+            # Add a new empty bucket for the current month's acquisitions
+            short_term_monthly_buckets.append((0, 0))
 
             # Step 2: Calculate Market Returns & Update Portfolio
             random_monthly_return = _get_random_number(
@@ -100,10 +100,13 @@ def run_simulation(inputs):
                 return_distribution_df
             )
             long_term_value *= (1 + random_monthly_return)
-            short_term_value *= (1 + random_monthly_return)
+            short_term_monthly_buckets = [
+                (value * (1 + random_monthly_return), basis)
+                for value, basis in short_term_monthly_buckets
+            ]
 
             # Step 3: Handle Quarterly Dividends
-            total_portfolio_value = long_term_value + short_term_value
+            total_portfolio_value = long_term_value + sum(b[0] for b in short_term_monthly_buckets)
             if month % 3 == 0:
                 dividend_payment = total_portfolio_value * quarterly_dividend_yield
                 margin_loan -= dividend_payment
@@ -117,10 +120,12 @@ def run_simulation(inputs):
             total_margin_interest_paid_this_year += monthly_margin_interest
 
             # Step 5: Check for Forced Selling (Deleveraging)
+            short_term_value = sum(b[0] for b in short_term_monthly_buckets)
             total_portfolio_value = long_term_value + short_term_value
-            margin_limit = total_portfolio_value * brokerage_margin_limit
+            margin_limit = max(0, total_portfolio_value * brokerage_margin_limit)
             if margin_loan > margin_limit:
                 amount_to_sell = (margin_loan - margin_limit) / (1 - brokerage_margin_limit)
+                sell_from_long_term = 0
                 if long_term_value > 0:
                     sell_from_long_term = min(amount_to_sell, long_term_value)
                     gain_from_lt_sale = (sell_from_long_term / long_term_value) * (long_term_value - long_term_basis)
@@ -129,13 +134,24 @@ def run_simulation(inputs):
                     gains_realized_this_year += gain_from_lt_sale
                     margin_loan -= sell_from_long_term
 
-                if amount_to_sell > sell_from_long_term and short_term_value > 0:
-                    sell_from_short_term = min(amount_to_sell - sell_from_long_term, short_term_value)
-                    gain_from_st_sale = (sell_from_short_term / short_term_value) * (short_term_value - short_term_basis)
-                    short_term_basis -= (sell_from_short_term / short_term_value) * short_term_basis
-                    short_term_value -= sell_from_short_term
-                    gains_realized_this_year += gain_from_st_sale
-                    margin_loan -= sell_from_short_term
+                amount_to_sell_from_st = amount_to_sell - sell_from_long_term
+                if amount_to_sell_from_st > 0 and short_term_value > 0:
+                    # Sell from short-term buckets, LIFO (newest first)
+                    for i in range(len(short_term_monthly_buckets) - 1, -1, -1):
+                        if amount_to_sell_from_st <= 0:
+                            break
+                        bucket_value, bucket_basis = short_term_monthly_buckets[i]
+                        if bucket_value > 0:
+                            sell_from_this_bucket = min(amount_to_sell_from_st, bucket_value)
+
+                            gain_from_bucket = (sell_from_this_bucket / bucket_value) * (bucket_value - bucket_basis)
+                            new_bucket_basis = bucket_basis - (sell_from_this_bucket / bucket_value) * bucket_basis
+                            new_bucket_value = bucket_value - sell_from_this_bucket
+                            short_term_monthly_buckets[i] = (new_bucket_value, new_bucket_basis)
+
+                            gains_realized_this_year += gain_from_bucket
+                            margin_loan -= sell_from_this_bucket
+                            amount_to_sell_from_st -= sell_from_this_bucket
 
 
             # Step 6: Execute End-of-Year Tax Strategy
@@ -160,8 +176,12 @@ def run_simulation(inputs):
                         actual_gain_harvested = value_to_harvest - harvested_basis
                         long_term_value -= value_to_harvest
                         long_term_basis -= harvested_basis
-                        short_term_value += value_to_harvest
-                        short_term_basis += value_to_harvest
+                        # Add the harvested amount to the newest short-term bucket
+                        newest_bucket_value, newest_bucket_basis = short_term_monthly_buckets[-1]
+                        short_term_monthly_buckets[-1] = (
+                            newest_bucket_value + value_to_harvest,
+                            newest_bucket_basis + value_to_harvest # Stepped-up basis
+                        )
                         gains_realized_this_year += actual_gain_harvested #gains_to_harvest
 
                 # Calculate and "Pay" California Tax
@@ -183,7 +203,7 @@ def run_simulation(inputs):
                 )
 
             # Step 7: Record Net Worth
-            net_worth = (long_term_value + short_term_value) - margin_loan
+            net_worth = (long_term_value + sum(b[0] for b in short_term_monthly_buckets)) - margin_loan
             monthly_net_worth.append(net_worth)
 
             # Stop simulation if average net worth is below zero
