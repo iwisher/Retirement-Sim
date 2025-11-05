@@ -106,19 +106,41 @@ def run_and_display_simulation(
         'Max Net Worth': results['max_net_worth']
     })
 
+    display_df = df.copy()
     for col in ['Min Net Worth', '1st Percentile', '25th Percentile', 'Median Net Worth', 'Avg Net Worth', '75th Percentile', '99th Percentile', 'Max Net Worth']:
-        df[col] = df[col].map('${:,.2f}'.format)
+        display_df[col] = display_df[col].map('${:,.2f}'.format)
 
     return (
         gr.update(visible=True),
         summary_title,
         summary_text,
         fig,
+        display_df,
         df,
         gr.update(open=True),
         gr.update(open=True)
     )
 
+
+
+def download_data(df):
+    if df is None:
+        return gr.update(visible=False)
+    
+    import tempfile
+    import os
+    
+    # Create a temporary file
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    
+    try:
+        with os.fdopen(fd, 'w', newline='') as f:
+            df.to_csv(f, index=False)
+        
+        return gr.update(value=path, visible=True)
+    except Exception as e:
+        print(f"Error creating CSV for download: {e}")
+        return gr.update(visible=False)
 
 def get_gemini_analysis(
     # API Key and results
@@ -382,12 +404,17 @@ with gr.Blocks(
         with gr.Accordion("View Monthly Data", open=False) as monthly_data_accordion:
             dataframe_output = gr.Dataframe(headers=["Month", "Min Net Worth", "1st Percentile", "25th Percentile", "Median Net Worth", "Avg Net Worth", "75th Percentile", "99th Percentile", "Max Net Worth"], datatype=[
                                             "number", "str", "str", "str", "str", "str", "str", "str", "str"])
+            with gr.Row():
+                download_button = gr.Button("Download Data as CSV")
+                download_file = gr.File(label="Download CSV", visible=False)
 
         with gr.Accordion("Get Gemini Analysis", open=False) as gemini_analysis_accordion:
             gemini_key = gr.Textbox(
                 label="Enter your Gemini API Key", type="password")
             analyze_button = gr.Button("Analyze Results")
             gemini_analysis_output = gr.Markdown()
+
+        df_state = gr.State()
 
     # --- Event Handlers ---
     def update_summary_style(summary_title):
@@ -408,6 +435,12 @@ with gr.Blocks(
 
     enable_margin_investing.change(toggle_margin_investing_buffer, inputs=enable_margin_investing, outputs=margin_investing_buffer)
 
+    download_button.click(
+        fn=download_data,
+        inputs=[df_state],
+        outputs=[download_file]
+    )
+
     # Main simulation button
     run_button.click(
         fn=run_and_display_simulation,
@@ -426,6 +459,7 @@ with gr.Blocks(
             summary_text_output,
             plot_output,
             dataframe_output,
+            df_state,
             monthly_data_accordion,
             gemini_analysis_accordion
         ],
