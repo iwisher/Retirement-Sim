@@ -14,7 +14,9 @@ def run_and_display_simulation(
     margin_limit, simulation_count, tax_harvesting_profit_threshold,
     # New Distribution Inputs
     return_dist_model, return_dist_df,
-    interest_rate_dist_model, interest_rate_dist_df
+    interest_rate_dist_model, interest_rate_dist_df,
+    # New Margin Investing Inputs
+    enable_margin_investing, margin_investing_buffer
 ):
     """
     Runs the simulation and formats the output for the Gradio interface.
@@ -37,7 +39,9 @@ def run_and_display_simulation(
         'return_distribution_model': return_dist_model,
         'return_distribution_df': return_dist_df,
         'interest_rate_distribution_model': interest_rate_dist_model,
-        'interest_rate_distribution_df': interest_rate_dist_df
+        'interest_rate_distribution_df': interest_rate_dist_df,
+        'enable_margin_investing': enable_margin_investing,
+        'margin_investing_buffer': margin_investing_buffer / 100 # Convert percentage to decimal
     }
 
     results, _ = run_simulation(inputs)
@@ -146,7 +150,7 @@ def get_gemini_analysis(
 
         Key Factors: Explain the key variables within the simulation (such as market volatility or withdrawal rate) that most significantly influence this outcome.
 
-        Risk Analysis & Mitigation Strategies: If the simulation indicates a high risk of failure, first identify the primary statistical drivers causing it. After identifying the cause, neutrally present common strategies and variable adjustments used to mitigate such risks. For each strategy (e.g., "reducing withdrawals," "securing a cash buffer," or "adjusting asset allocation"), briefly explain the potential tradeoffs or impact it would have on the plan according to financial principles.
+        Risk Analysis & Mitigation Strategies: If the simulation indicates a high risk of broken in eariler months, first identify the primary statistical drivers causing it. After identifying the cause, neutrally present common strategies and variable adjustments used to mitigate such risks. For each strategy (e.g., "reducing withdrawals," "securing a cash buffer," or "adjusting asset allocation"), briefly explain the potential tradeoffs or impact it would have on the plan according to financial principles.
 
         Length: Keep the entire response to no longer than six paragraphs.
         '''
@@ -274,6 +278,13 @@ with gr.Blocks(
                     interest_rate_dist_df = gr.Slider(minimum=2.1, maximum=30, value=5, step=0.1, label="Degrees of Freedom (for Student's t)",
                                                       info="Lower values create 'fatter tails'. Only used if Student's t is selected.", visible=False)
 
+        with gr.Accordion("Margin Investing Settings", open=False):
+            gr.Markdown("<p style='text-align: center; font-size: 1rem; font-family: Inter, sans-serif;'>Configure automatic margin borrowing for investment.</p>")
+            enable_margin_investing = gr.Checkbox(label="Enable Margin Investing", value=False,
+                                                  info="If enabled, the simulation will automatically borrow from margin to invest when there's room, maintaining a buffer below the margin limit.")
+            margin_investing_buffer = gr.Slider(minimum=0, maximum=50, value=10, step=1, label="Margin Investing Buffer (%)",
+                                                info="The percentage below the brokerage margin limit that the simulation will aim to maintain when investing. (e.g., 10% means it will borrow up to 10% less than the max limit).", visible=False)
+
         run_button = gr.Button(
             "Run Simulation", variant="primary", scale=1, elem_id="run_button")
 
@@ -389,8 +400,13 @@ with gr.Blocks(
     def toggle_df_slider(dist_model):
         return gr.update(visible=dist_model == "Student's t")
 
+    def toggle_margin_investing_buffer(enable_investing):
+        return gr.update(visible=enable_investing)
+
     return_dist_model.change(toggle_df_slider, inputs=return_dist_model, outputs=return_dist_df)
     interest_rate_dist_model.change(toggle_df_slider, inputs=interest_rate_dist_model, outputs=interest_rate_dist_df)
+
+    enable_margin_investing.change(toggle_margin_investing_buffer, inputs=enable_margin_investing, outputs=margin_investing_buffer)
 
     # Main simulation button
     run_button.click(
@@ -401,7 +417,8 @@ with gr.Blocks(
             annual_return, annual_std_dev, margin_rate, margin_rate_std_dev,
             margin_limit, simulation_count, tax_harvesting_profit_threshold,
             return_dist_model, return_dist_df,
-            interest_rate_dist_model, interest_rate_dist_df
+            interest_rate_dist_model, interest_rate_dist_df,
+            enable_margin_investing, margin_investing_buffer
         ],
         outputs=[
             results_box,

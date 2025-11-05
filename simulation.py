@@ -51,6 +51,8 @@ def run_simulation(inputs):
     return_distribution_df = inputs.get('return_distribution_df', 5)
     interest_rate_distribution_model = inputs.get('interest_rate_distribution_model', 'Normal')
     interest_rate_distribution_df = inputs.get('interest_rate_distribution_df', 5)
+    enable_margin_investing = inputs.get('enable_margin_investing', False)
+    margin_investing_buffer = inputs.get('margin_investing_buffer', 0.10)
 
     # --- Simulation setup ---
     num_months = 120
@@ -99,6 +101,22 @@ def run_simulation(inputs):
                 (value * (1 + random_monthly_return), basis)
                 for value, basis in short_term_monthly_buckets
             ]
+
+            # Step 2.5: Optional Margin Investing
+            if enable_margin_investing:
+                total_portfolio_value_for_investing = long_term_value + sum(b[0] for b in short_term_monthly_buckets)
+                # Borrow up to a user-defined buffer below the margin limit
+                investing_margin_limit = max(0, total_portfolio_value_for_investing * (brokerage_margin_limit - margin_investing_buffer))
+
+                if margin_loan < investing_margin_limit:
+                    amount_to_borrow_and_invest = investing_margin_limit - margin_loan
+                    margin_loan += amount_to_borrow_and_invest
+                    # Invest into the newest short-term bucket
+                    newest_bucket_value, newest_bucket_basis = short_term_monthly_buckets[-1]
+                    short_term_monthly_buckets[-1] = (
+                        newest_bucket_value + amount_to_borrow_and_invest,
+                        newest_bucket_basis + amount_to_borrow_and_invest
+                    )
 
             # Step 3: Handle Quarterly Dividends
             total_portfolio_value = long_term_value + sum(b[0] for b in short_term_monthly_buckets)
@@ -274,7 +292,9 @@ def main():
         'return_distribution_model': 'Laplace',
         'return_distribution_df': 5,
         'interest_rate_distribution_model': 'Laplace',
-        'interest_rate_distribution_df': 5
+        'interest_rate_distribution_df': 5,
+        'enable_margin_investing': False,
+        'margin_investing_buffer': 0.10
     }
 
     results, _ = run_simulation(inputs)
