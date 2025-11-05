@@ -57,6 +57,8 @@ def run_simulation(inputs):
     monthly_spending = annual_spending / 12
     monthly_return = (1 + portfolio_annual_return)**(1/12) - 1
     monthly_std_dev = portfolio_annual_std_dev / np.sqrt(12)
+    monthly_margin_rate = (1 + margin_loan_annual_avg_interest_rate)**(1/12) - 1
+    monthly_margin_rate_std_dev = margin_loan_annual_interest_rate_std_dev / np.sqrt(12)
 
     all_simulations_net_worth = []
 
@@ -71,13 +73,6 @@ def run_simulation(inputs):
         total_margin_interest_paid_this_year = 0
         gains_realized_this_year = 0
         total_dividend_income_this_year = 0
-
-        current_annual_margin_rate = _get_random_number(
-            interest_rate_distribution_model,
-            margin_loan_annual_avg_interest_rate,
-            margin_loan_annual_interest_rate_std_dev,
-            interest_rate_distribution_df
-        )
 
         monthly_net_worth = []
 
@@ -115,7 +110,13 @@ def run_simulation(inputs):
             # Step 4: Cover Expenses & Update Margin Loan
             cash_shortfall = monthly_spending - monthly_passive_income
             margin_loan += cash_shortfall
-            monthly_margin_interest = margin_loan * (current_annual_margin_rate / 12)
+            current_monthly_margin_rate = _get_random_number(
+                interest_rate_distribution_model,
+                monthly_margin_rate,
+                monthly_margin_rate_std_dev,
+                interest_rate_distribution_df
+            )
+            monthly_margin_interest = margin_loan * current_monthly_margin_rate
             margin_loan += monthly_margin_interest
             total_margin_interest_paid_this_year += monthly_margin_interest
 
@@ -191,16 +192,10 @@ def run_simulation(inputs):
                 ca_tax_due = max(0, net_investment_income * 0.093) #net_investment_income * 0.093
                 margin_loan += ca_tax_due
 
-                # Reset annual counters and set new margin rate
+                # Reset annual counters
                 total_margin_interest_paid_this_year = 0
                 gains_realized_this_year = 0
                 total_dividend_income_this_year = 0
-                current_annual_margin_rate = _get_random_number(
-                    interest_rate_distribution_model,
-                    margin_loan_annual_avg_interest_rate,
-                    margin_loan_annual_interest_rate_std_dev,
-                    interest_rate_distribution_df
-                )
 
             # Step 7: Record Net Worth
             net_worth = (long_term_value + sum(b[0] for b in short_term_monthly_buckets)) - margin_loan
