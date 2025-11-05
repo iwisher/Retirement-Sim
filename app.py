@@ -152,7 +152,9 @@ def get_gemini_analysis(
     margin_limit, simulation_count, tax_harvesting_profit_threshold,
     # Distribution Inputs
     return_dist_model, return_dist_df,
-    interest_rate_dist_model, interest_rate_dist_df
+    interest_rate_dist_model, interest_rate_dist_df,
+    # New Margin Investing Inputs
+    enable_margin_investing, margin_investing_buffer
 ):
     """
     Analyzes the simulation results using the Gemini Pro API.
@@ -170,7 +172,7 @@ def get_gemini_analysis(
 
         One-Sentence Summary: Begin with a single summary sentence describing the primary outcome of the simulation (e.g., the statistical probability of the plan succeeding).
 
-        Key Factors: Explain the key variables within the simulation (such as market volatility or withdrawal rate) that most significantly influence this outcome.
+        Key Factors: Explain the key variables and *chosen strategies* (like Tax-Gain Harvesting or the Margin Investing strategy) that most significantly influence the outcome. Comment on the potential risks and rewards of these strategies based on the provided data.
 
         Risk Analysis & Mitigation Strategies: If the simulation indicates a high risk of broken in eariler months, first identify the primary statistical drivers causing it. After identifying the cause, neutrally present common strategies and variable adjustments used to mitigate such risks. For each strategy (e.g., "reducing withdrawals," "securing a cash buffer," or "adjusting asset allocation"), briefly explain the potential tradeoffs or impact it would have on the plan according to financial principles.
 
@@ -197,6 +199,9 @@ def get_gemini_analysis(
         - Tax Harvesting Profit Threshold: {tax_harvesting_profit_threshold}%
         - Number of Simulations: {simulation_count}
         """
+        if enable_margin_investing:
+            input_summary += f"""- Margin Investing: Enabled (Target buffer: {margin_investing_buffer}% below limit)
+        """
 
         simulation_logic = """
         **Simulation Logic Overview:**
@@ -204,6 +209,10 @@ def get_gemini_analysis(
         - **Monthly Cycle:** The portfolio grows or shrinks based on random market returns. Dividends are paid quarterly and reduce the margin loan. Monthly spending is covered by borrowing on margin. Interest accrues on the loan. If the loan exceeds the margin limit, assets are sold to deleverage.
         - **Annual Cycle:** At year-end, a tax-gain harvesting strategy is executed. It sells assets to realize gains up to the federal tax-free limit, then immediately repurchases them to step-up the cost basis. California state tax is calculated on the net investment income (dividends + gains - margin interest) and the tax bill is added to the margin loan balance for the new year.
         """
+        if enable_margin_investing:
+            simulation_logic += """
+        - **Margin Investing Strategy:** When enabled, the simulation automatically borrows more from margin to invest whenever the loan-to-value ratio is below its target (the margin limit minus the specified buffer). This is a form of dynamic leverage intended to increase investment exposure during market upturns.
+            """
 
         user_query = f"""
         Here are the results of a 10-year retirement simulation. Please provide a brief analysis.
@@ -221,10 +230,15 @@ def get_gemini_analysis(
 
         prompt = f"{system_prompt}\n\n{user_query}"
 
-        response = model.generate_content(prompt)
-        return response.text
+        response = model.generate_content(prompt, stream=True)
+        
+        output = ""
+        for chunk in response:
+            output += chunk.text
+            yield output
+
     except Exception as e:
-        return f"An error occurred: {e}"
+        yield f"An error occurred: {e}"
 
 
 # --- Gradio UI ---
@@ -480,7 +494,8 @@ with gr.Blocks(
             annual_return, annual_std_dev, margin_rate, margin_rate_std_dev,
             margin_limit, simulation_count, tax_harvesting_profit_threshold,
             return_dist_model, return_dist_df,
-            interest_rate_dist_model, interest_rate_dist_df
+            interest_rate_dist_model, interest_rate_dist_df,
+            enable_margin_investing, margin_investing_buffer
         ],
         outputs=[gemini_analysis_output],
         show_progress='full'
