@@ -14,9 +14,9 @@ from kivy.uix.button import Button
 from kivy.uix.spinner import Spinner
 from kivy.uix.checkbox import CheckBox
 from kivy.uix.slider import Slider
-from kivy.uix.accordion import Accordion, AccordionItem
+
 from kivy.clock import Clock, mainthread
-from kivy.garden.matplotlib.figurecanvas import FigureCanvasKivyAgg
+from kivy_garden.matplotlib.backend_kivyagg import FigureCanvasKivyAgg
 import matplotlib.pyplot as plt
 import numpy as np
 import threading
@@ -32,53 +32,54 @@ class RetirementSimApp(App):
         root = BoxLayout(orientation='vertical', padding=10, spacing=10)
 
         # --- Scrollable Input Area ---
-        scroll_view = ScrollView(size_hint=(1, 1))
-        # Use a main layout that will contain the accordions
-        main_layout = BoxLayout(orientation='vertical', size_hint_y=None)
-        main_layout.bind(minimum_height=main_layout.setter('height'))
+        scroll_view = ScrollView(size_hint_y=1)
+        
+        main_grid = GridLayout(cols=1, spacing=10, size_hint_y=None)
+        main_grid.bind(minimum_height=main_grid.setter('height'))
 
-        # --- Accordion for Inputs ---
-        accordion = Accordion(orientation='vertical')
+        # --- Header 1 ---
+        main_grid.add_widget(Label(text="Step 1: Core Financial Inputs", size_hint_y=None, height=40, font_size='18sp', bold=True))
+        
+        # --- Core Inputs Grid ---
+        core_grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
+        core_grid.bind(minimum_height=core_grid.setter('height'))
+        self._create_core_input_widgets(core_grid)
+        main_grid.add_widget(core_grid)
 
-        # --- Accordion Item 1: Core Inputs ---
-        item1 = AccordionItem(title='Step 1: Core Financial Inputs', background_normal='atlas://data/images/defaulttheme/button')
-        grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
-        grid.bind(minimum_height=grid.setter('height'))
-        self._create_core_input_widgets(grid)
-        item1.add_widget(grid)
-        accordion.add_widget(item1)
+        # --- Header 2 ---
+        main_grid.add_widget(Label(text="Step 2: Advanced Settings", size_hint_y=None, height=40, font_size='18sp', bold=True))
 
-        # --- Accordion Item 2: Advanced Settings ---
-        item2 = AccordionItem(title='Step 2: Advanced Settings', background_normal='atlas://data/images/defaulttheme/button_disabled')
+        # --- Advanced Inputs Grid ---
         advanced_grid = GridLayout(cols=2, spacing=10, size_hint_y=None)
         advanced_grid.bind(minimum_height=advanced_grid.setter('height'))
         self._create_advanced_input_widgets(advanced_grid)
-        item2.add_widget(advanced_grid)
-        accordion.add_widget(item2)
+        main_grid.add_widget(advanced_grid)
         
-        main_layout.add_widget(accordion)
+        scroll_view.add_widget(main_grid)
+        root.add_widget(scroll_view)
 
         # --- Run Button ---
         self.run_button = Button(text="Run Simulation", size_hint_y=None, height=50, background_color=(0.2, 0.6, 0.8, 1))
         self.run_button.bind(on_press=self.run_simulation_callback)
-        main_layout.add_widget(self.run_button)
-
-        scroll_view.add_widget(main_layout)
-        root.add_widget(scroll_view)
+        root.add_widget(self.run_button)
 
         # --- Results Area ---
-        self.summary_label = Label(text="Run the simulation to see results.", size_hint_y=0.1, markup=True)
+        self.summary_label = Label(text="Run the simulation to see results.", size_hint_y=0.15, markup=True)
         root.add_widget(self.summary_label)
 
         # Matplotlib plot
         self.fig, self.ax = plt.subplots(figsize=(10, 6))
         self.canvas = FigureCanvasKivyAgg(self.fig)
+        self.canvas.size_hint_y = 0.85
         root.add_widget(self.canvas)
 
         return root
 
     def _add_widget_pair(self, grid, label_text, widget_key, widget):
-        grid.add_widget(Label(text=label_text))
+        label = Label(text=label_text, size_hint_y=None, height=40)
+        widget.size_hint_y = None
+        widget.height = 40
+        grid.add_widget(label)
         grid.add_widget(widget)
         self.inputs[widget_key] = widget
 
@@ -100,48 +101,89 @@ class RetirementSimApp(App):
     def _create_advanced_input_widgets(self, grid):
         # Return Distribution
         self._add_widget_pair(grid, "Return Distribution", 'return_dist_model', Spinner(text='Normal', values=('Normal', "Student's t", 'Laplace')))
-        self.inputs['return_dist_model'].bind(text=self.toggle_df_slider)
-        self.return_df_label = Label(text="Degrees of Freedom (Return)")
+        self.inputs['return_dist_model'].bind(text=self.toggle_return_df_slider)
+        
+        # DF Return Slider
+        self.return_df_label = Label(text="Degrees of Freedom (Return)", size_hint_y=None, height=40)
+        df_return_layout = BoxLayout(size_hint_y=None, height=40)
         self.return_df_slider = Slider(min=2.1, max=30, value=5, step=0.1)
+        self.return_df_value_label = Label(text=f'{self.return_df_slider.value:.1f}', size_hint_x=0.3)
+        self.return_df_slider.bind(value=self.update_slider_label)
+        df_return_layout.add_widget(self.return_df_slider)
+        df_return_layout.add_widget(self.return_df_value_label)
         grid.add_widget(self.return_df_label)
-        grid.add_widget(self.return_df_slider)
+        grid.add_widget(df_return_layout)
         self.inputs['return_dist_df'] = self.return_df_slider
-        self.toggle_df_slider(None, 'Normal', 'return') # Initially hide
+        self.toggle_return_df_slider(None, 'Normal')
 
         # Interest Rate Distribution
         self._add_widget_pair(grid, "Interest Rate Distribution", 'interest_rate_dist_model', Spinner(text='Normal', values=('Normal', "Student's t", 'Laplace')))
-        self.inputs['interest_rate_dist_model'].bind(text=self.toggle_df_slider)
-        self.ir_df_label = Label(text="Degrees of Freedom (Interest)")
+        self.inputs['interest_rate_dist_model'].bind(text=self.toggle_interest_df_slider)
+
+        # DF Interest Slider
+        self.ir_df_label = Label(text="Degrees of Freedom (Interest)", size_hint_y=None, height=40)
+        df_interest_layout = BoxLayout(size_hint_y=None, height=40)
         self.ir_df_slider = Slider(min=2.1, max=30, value=5, step=0.1)
+        self.ir_df_value_label = Label(text=f'{self.ir_df_slider.value:.1f}', size_hint_x=0.3)
+        self.ir_df_slider.bind(value=self.update_slider_label)
+        df_interest_layout.add_widget(self.ir_df_slider)
+        df_interest_layout.add_widget(self.ir_df_value_label)
         grid.add_widget(self.ir_df_label)
-        grid.add_widget(self.ir_df_slider)
+        grid.add_widget(df_interest_layout)
         self.inputs['interest_rate_dist_df'] = self.ir_df_slider
-        self.toggle_df_slider(None, 'Normal', 'interest') # Initially hide
+        self.toggle_interest_df_slider(None, 'Normal')
 
         # Margin Investing
         self._add_widget_pair(grid, "Enable Margin Investing", 'enable_margin_investing', CheckBox())
         self.inputs['enable_margin_investing'].bind(active=self.toggle_margin_buffer)
-        self.margin_buffer_label = Label(text="Margin Investing Buffer (%)")
-        self.margin_buffer_slider = Slider(min=0, max=50, value=10, step=1)
-        grid.add_widget(self.margin_buffer_label)
-        grid.add_widget(self.margin_buffer_slider)
-        self.inputs['margin_investing_buffer'] = self.margin_buffer_slider
-        self.toggle_margin_buffer(None, False) # Initially hide
 
-    def toggle_df_slider(self, spinner, text, model_type=None):
-        # A bit of logic to figure out which spinner called this
-        if spinner == self.inputs['return_dist_model']:
-            is_visible = (text == "Student's t")
-            self.return_df_label.opacity = 1 if is_visible else 0
-            self.return_df_slider.opacity = 1 if is_visible else 0
-        elif spinner == self.inputs['interest_rate_dist_model']:
-            is_visible = (text == "Student's t")
-            self.ir_df_label.opacity = 1 if is_visible else 0
-            self.ir_df_slider.opacity = 1 if is_visible else 0
+        # Margin Buffer Slider
+        self.margin_buffer_label = Label(text="Margin Investing Buffer (%)", size_hint_y=None, height=40)
+        margin_buffer_layout = BoxLayout(size_hint_y=None, height=40)
+        self.margin_buffer_slider = Slider(min=0, max=50, value=10, step=1)
+        self.margin_buffer_value_label = Label(text=f'{int(self.margin_buffer_slider.value)}%', size_hint_x=0.3)
+        self.margin_buffer_slider.bind(value=self.update_slider_label)
+        margin_buffer_layout.add_widget(self.margin_buffer_slider)
+        margin_buffer_layout.add_widget(self.margin_buffer_value_label)
+        grid.add_widget(self.margin_buffer_label)
+        grid.add_widget(margin_buffer_layout)
+        self.inputs['margin_investing_buffer'] = self.margin_buffer_slider
+        self.toggle_margin_buffer(None, False)
+
+    def update_slider_label(self, instance, value):
+        if instance == self.return_df_slider:
+            self.return_df_value_label.text = f'{value:.1f}'
+        elif instance == self.ir_df_slider:
+            self.ir_df_value_label.text = f'{value:.1f}'
+        elif instance == self.margin_buffer_slider:
+            self.margin_buffer_value_label.text = f'{int(value)}%'
+
+    def toggle_return_df_slider(self, spinner, text):
+        is_visible = (text == "Student's t")
+        self.return_df_label.opacity = 1 if is_visible else 0
+        self.return_df_slider.opacity = 1 if is_visible else 0
+        self.return_df_value_label.opacity = 1 if is_visible else 0
+        self.return_df_label.height = 40 if is_visible else 0
+        self.return_df_slider.height = 40 if is_visible else 0
+        self.return_df_value_label.height = 40 if is_visible else 0
+
+
+    def toggle_interest_df_slider(self, spinner, text):
+        is_visible = (text == "Student's t")
+        self.ir_df_label.opacity = 1 if is_visible else 0
+        self.ir_df_slider.opacity = 1 if is_visible else 0
+        self.ir_df_value_label.opacity = 1 if is_visible else 0
+        self.ir_df_label.height = 40 if is_visible else 0
+        self.ir_df_slider.height = 40 if is_visible else 0
+        self.ir_df_value_label.height = 40 if is_visible else 0
 
     def toggle_margin_buffer(self, checkbox, is_active):
         self.margin_buffer_label.opacity = 1 if is_active else 0
         self.margin_buffer_slider.opacity = 1 if is_active else 0
+        self.margin_buffer_value_label.opacity = 1 if is_active else 0
+        self.margin_buffer_label.height = 40 if is_active else 0
+        self.margin_buffer_slider.height = 40 if is_active else 0
+        self.margin_buffer_value_label.height = 40 if is_active else 0
 
     def run_simulation_callback(self, instance):
         self.run_button.disabled = True
