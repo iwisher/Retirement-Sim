@@ -3,3 +3,6 @@ matplotlib
 gradio
 pandas
 google-generativeai
+kivy
+kivy-garden.matplotlib
+buildozer
