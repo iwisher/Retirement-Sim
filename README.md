@@ -8,6 +8,7 @@ The simulation models a retirement strategy where an individual with a $1M stock
 
 Each simulation month includes several key financial events:
 - **Portfolio Growth:** The portfolio's value changes based on a randomized monthly return. The model can generate these returns using a **Normal**, **Student's t**, or **Laplace** distribution to better simulate real-world market behavior.
+It's important to note that the simulation models each month's return as an independent event, drawing from the specified statistical distribution. This approach, often referred to as a 'random walk,' is a widely accepted simplification in financial modeling, reflecting the market's inherent unpredictability. While real markets can exhibit short-term dependencies like momentum or volatility clustering, this simulation focuses on long-term risk assessment using independent monthly returns.
 - **Dividend Payouts:** Every quarter, dividends are paid out and used to reduce the margin loan balance.
 - **Expense Funding:** Monthly living expenses are covered first by any passive income, with the remainder funded by increasing the margin loan.
 - **Margin Interest:** Interest accrues monthly on the margin loan balance based on a randomized annual rate, which can also be modeled using one of the three statistical distributions.
