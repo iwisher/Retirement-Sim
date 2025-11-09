@@ -31,7 +31,18 @@ To create a more realistic simulation, this model includes two alternative distr
 
 By choosing these alternative distributions in the "Advanced Settings" of the web UI, you can get a more robust understanding of the potential risks in your retirement strategy.
 
+## Advanced Feature: Margin Investing
+
+This simulation allows for an optional "Margin Investing" strategy, where the system automatically borrows on margin to invest when there is available capacity, maintaining a user-defined buffer below the maximum margin limit. This can potentially amplify returns but also increases risk.
+
+![Margin Reinvest Setting](ref/margin_reinvest_setting.png)
+
+
 ### Visual Comparison of Distributions
+
+The images below show the advance simulation setting. 
+
+![Student's t-Distribution](ref/distribution_setting.png)
 
 The images below show the simulation results using the three different distribution models. Notice how the "Min Net Worth" (the red line) dips lower in the Student's t and Laplace simulations, reflecting the higher probability of extreme negative returns.
 
@@ -83,10 +94,68 @@ python3 simulation.py
 ```
 The script will output a results table to the console and display a plot visualizing the simulation outcomes.
 
+### 3. Mobile App (Android/iOS)
+
+A mobile-compatible version of the app has been built using the Kivy framework. You can run it on your desktop or package it for mobile devices.
+
+**To run the app on your desktop:**
+```bash
+python mobile_app.py
+```
+
+**To package for Android/iOS (Advanced):**
+
+You can turn the Kivy app into an Android `.apk` or `.aab` file, or an iOS XCode project, using a tool called **Buildozer**. This is an advanced process that requires installing additional dependencies like the Android NDK and SDK.
+
+1.  **Install Buildozer:**
+    ```bash
+    pip install buildozer
+    ```
+2.  **Create a `buildozer.spec` file:**
+    ```bash
+    buildozer init
+    ```
+3.  **Edit the `buildozer.spec` file:** You will need to configure the `requirements` line to include `python3,kivy,matplotlib,numpy,pandas`.
+4.  **Run Buildozer:**
+    ```bash
+    # For Android
+    buildozer android debug deploy run
+    
+    # For iOS (requires macOS)
+    buildozer ios debug
+    ```
+For detailed instructions, please refer to the official [Buildozer documentation](https://buildozer.readthedocs.io/en/latest/).
+
+
 ## Customizing the Simulation
 
 -   **Via the Web Interface**: The easiest way to customize the simulation is by running `app.py` and modifying the inputs directly in your browser. This includes basic financial parameters as well as advanced settings for the underlying statistical distribution models (Normal, Student's t, Laplace).
 -   **Via the Command-Line**: If you are using `simulation.py`, you can customize the run by modifying the `inputs` dictionary within the `main()` function of the script.
+
+### Simulation Parameters
+
+Here is a comprehensive list of all configurable parameters for the simulation:
+
+*   **Initial Portfolio Value ($)**: The starting value of your investment portfolio.
+*   **Initial Cost Basis ($)**: The original value of your assets for tax purposes.
+*   **Annual Spending ($)**: The total amount of money you plan to spend annually.
+*   **Monthly Passive Income ($)**: Your monthly income from sources other than the portfolio.
+*   **Quarterly Dividend Yield (%)**: The quarterly dividend yield of your portfolio.
+*   **Federal Tax-Free Gain Limit ($)**: The annual limit for tax-free capital gains.
+*   **Avg. Annual Return (%)**: The expected average annual return of your portfolio.
+*   **Annual Std. Dev. (%)**: The annualized standard deviation of your portfolio's returns (volatility).
+*   **Avg. Margin Rate (%)**: The average annual interest rate on your margin loan.
+*   **Margin Rate Std. Dev. (%)**: The standard deviation of the margin loan interest rate.
+*   **Margin Borrow Limit (%)**: The maximum percentage of your portfolio you are willing to borrow on margin.
+*   **# of Simulations**: The number of different market scenarios to simulate.
+*   **Tax Harvest Profit Threshold (%)**: The unrealized profit percentage that triggers tax-gain harvesting.
+*   **Portfolio Return Distribution**: Choose the probability distribution for generating random market returns (options: Normal, Student's t, Laplace).
+*   **Degrees of Freedom (for Student's t) (Return)**: Lower values create 'fatter tails' (more extreme events). Only used if Student's t is selected for portfolio returns.
+*   **Margin Rate Distribution**: Choose the probability distribution for generating random margin interest rates (options: Normal, Student's t, Laplace).
+*   **Degrees of Freedom (for Student's t) (Interest)**: Lower values create 'fatter tails'. Only used if Student's t is selected for margin interest rates.
+*   **Enable Margin Investing**: If enabled, the simulation will automatically borrow from margin to invest when there's room, maintaining a buffer below the margin limit.
+*   **Margin Investing Buffer (%)**: The percentage below the brokerage margin limit that the simulation will aim to maintain when investing. (e.g., 10% means it will borrow up to 10% less than the max limit).
+
 
 ## Project Files
 
