@@ -39,7 +39,7 @@ def run_simulation(inputs):
     monthly_passive_income = inputs['monthly_passive_income']
     portfolio_annual_return = inputs['portfolio_annual_return']
     portfolio_annual_std_dev = inputs['portfolio_annual_std_dev']
-    quarterly_dividend_yield = inputs['quarterly_dividend_yield']
+    annual_dividend_yield = inputs['annual_dividend_yield']
     margin_loan_annual_avg_interest_rate = inputs['margin_loan_annual_avg_interest_rate']
     margin_loan_annual_interest_rate_std_dev = inputs['margin_loan_annual_interest_rate_std_dev']
     brokerage_margin_limit = inputs['brokerage_margin_limit']
@@ -72,6 +72,7 @@ def run_simulation(inputs):
         short_term_monthly_buckets = [(0, 0)] * 12
         margin_loan = 0
 
+        net_investment_loss_carryover = 0
         total_margin_interest_paid_this_year = 0
         gains_realized_this_year = 0
         total_dividend_income_this_year = 0
@@ -121,7 +122,7 @@ def run_simulation(inputs):
             # Step 3: Handle Quarterly Dividends
             total_portfolio_value = long_term_value + sum(b[0] for b in short_term_monthly_buckets)
             if month % 3 == 0:
-                dividend_payment = total_portfolio_value * quarterly_dividend_yield
+                dividend_payment = total_portfolio_value * (annual_dividend_yield / 4)
                 margin_loan -= dividend_payment
                 total_dividend_income_this_year += dividend_payment
 
@@ -206,9 +207,19 @@ def run_simulation(inputs):
                 # Calculate and "Pay" California Tax
                 total_investment_income = gains_realized_this_year + total_dividend_income_this_year
                 net_investment_income = total_investment_income - total_margin_interest_paid_this_year
+                
+                # Apply loss carryover
+                taxable_income = net_investment_income + net_investment_loss_carryover
+                
                 # Simplified CA tax calculation
-                ca_tax_due = max(0, net_investment_income * 0.093) #net_investment_income * 0.093
+                ca_tax_due = max(0, taxable_income * 0.093)
                 margin_loan += ca_tax_due
+
+                # Update loss carryover for next year
+                if taxable_income < 0:
+                    net_investment_loss_carryover = taxable_income
+                else:
+                    net_investment_loss_carryover = 0
 
                 # Reset annual counters
                 total_margin_interest_paid_this_year = 0
@@ -282,7 +293,7 @@ def main():
         'monthly_passive_income': 1000,
         'portfolio_annual_return': 0.08,
         'portfolio_annual_std_dev': 0.19,
-        'quarterly_dividend_yield': 0.02,
+        'annual_dividend_yield': 0.02,
         'margin_loan_annual_avg_interest_rate': 0.06,
         'margin_loan_annual_interest_rate_std_dev': 0.05,
         'brokerage_margin_limit': 0.70,

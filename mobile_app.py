@@ -105,7 +105,7 @@ class RetirementSimApp(App):
         self._add_widget_pair(grid, "Cost Basis ($)", 'initial_cost_basis', TextInput(text='1500000', multiline=False, input_filter='float'))
         self._add_widget_pair(grid, "Annual Spending ($)", 'annual_spending', TextInput(text='120000', multiline=False, input_filter='float'))
         self._add_widget_pair(grid, "Monthly Passive Income ($)", 'monthly_passive_income', TextInput(text='1000', multiline=False, input_filter='float'))
-        self._add_widget_pair(grid, "Quarterly Dividend Yield (%)", 'quarterly_dividend_yield', TextInput(text='1.0', multiline=False, input_filter='float'))
+        self._add_widget_pair(grid, "Annual Dividend Yield (%)", 'annual_dividend_yield', TextInput(text='4.0', multiline=False, input_filter='float'))
         self._add_widget_pair(grid, "Federal Tax-Free Gain Limit ($)", 'federal_tax_free_gain_limit', TextInput(text='123250', multiline=False, input_filter='float'))
         self._add_widget_pair(grid, "Avg. Annual Return (%)", 'annual_return', TextInput(text='10', multiline=False, input_filter='float'))
         self._add_widget_pair(grid, "Annual Std. Dev. (%)", 'annual_std_dev', TextInput(text='19', multiline=False, input_filter='float'))
@@ -223,13 +223,14 @@ class RetirementSimApp(App):
             })
 
             # Convert percentages to decimals
-            for key in ['annual_return', 'annual_std_dev', 'quarterly_dividend_yield', 'margin_rate', 'margin_rate_std_dev', 'margin_limit', 'tax_harvesting_profit_threshold', 'margin_investing_buffer']:
+            for key in ['annual_return', 'annual_std_dev', 'annual_dividend_yield', 'margin_rate', 'margin_rate_std_dev', 'margin_limit', 'tax_harvesting_profit_threshold', 'margin_investing_buffer']:
                 if key in sim_inputs:
                     sim_inputs[key] /= 100
             
             # Rename keys for simulation function
             sim_inputs['portfolio_annual_return'] = sim_inputs.pop('annual_return')
             sim_inputs['portfolio_annual_std_dev'] = sim_inputs.pop('annual_std_dev')
+            sim_inputs['annual_dividend_yield'] = sim_inputs.pop('annual_dividend_yield')
             sim_inputs['margin_loan_annual_avg_interest_rate'] = sim_inputs.pop('margin_rate')
             sim_inputs['margin_loan_annual_interest_rate_std_dev'] = sim_inputs.pop('margin_rate_std_dev')
             sim_inputs['brokerage_margin_limit'] = sim_inputs.pop('margin_limit')
