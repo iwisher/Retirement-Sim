@@ -20,6 +20,21 @@ At the end of each year, the model executes a tax strategy involving:
 
 The final output shows the monthly range of potential net worth (maximum, average, and minimum) across all simulated scenarios, helping to quantify the risk and potential success of this strategy.
 
+## Important Updates
+
+### Volatility Drag Correction Implemented
+
+A critical mathematical correction has been applied to the core simulation logic (`simulation.py`) to address the phenomenon of **volatility drag**.
+
+**What is Volatility Drag?**
+In financial simulations where returns are compounded over time and have variability (standard deviation), the arithmetic mean of the returns (the simple average) will be higher than the geometric mean (the actual compounded growth rate). If the simulation uses the arithmetic mean as its target for the random return generator, the *realized median (typical)* outcome of the simulation will consistently underperform the user's expected annual return.
+
+**The Fix:**
+The simulation now explicitly adjusts the monthly mean return used in its random number generation. This adjustment ensures that the **median** outcome of the Monte Carlo simulations accurately reflects the `Avg. Annual Return` specified by the user, providing a more reliable and intuitive result. This correction aligns the simulation with best practices in financial modeling for volatile assets.
+
+**Impact:**
+This fix provides more accurate and intuitive results. Users can now be confident that when they input an `Avg. Annual Return`, the typical (median) path of their portfolio in the simulation will closely match that expectation, even with significant volatility.
+
 ## Advanced Feature: Distribution Models for Risk
 
 While standard financial models often use a Normal distribution ("bell curve") to predict returns, real-world markets don't always follow this pattern. Markets can experience extreme events (crashes or rallies) more frequently than a Normal distribution would suggest. This phenomenon is known as "fat tails" or leptokurtosis.

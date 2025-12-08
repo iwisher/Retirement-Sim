@@ -57,8 +57,11 @@ def run_simulation(inputs):
     # --- Simulation setup ---
     num_months = 120
     monthly_spending = annual_spending / 12
-    monthly_return = (1 + portfolio_annual_return)**(1/12) - 1
+    # Adjust monthly return for volatility drag so median outcome matches target
+    geometric_monthly_return = (1 + portfolio_annual_return)**(1/12) - 1
     monthly_std_dev = portfolio_annual_std_dev / np.sqrt(12)
+    monthly_return = geometric_monthly_return + 0.5 * (monthly_std_dev**2)
+
     monthly_margin_rate = (1 + margin_loan_annual_avg_interest_rate)**(1/12) - 1
     monthly_margin_rate_std_dev = margin_loan_annual_interest_rate_std_dev / np.sqrt(12)
 
