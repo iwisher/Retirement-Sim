@@ -314,7 +314,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
             )
 
         # TAB 2: INTERACTIVE (New)
-        with gr.Tab("Interactive Mode 🎮"):
+        with gr.Tab("Game Mode 🎮"):
             gr.Markdown("Step year-by-year and adjust your strategy based on market conditions.")
             
             # Interactive State
