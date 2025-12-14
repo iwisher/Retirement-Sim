@@ -2,293 +2,381 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-def run_simulation(inputs):
-    """
-    Runs the Monte Carlo retirement simulation.
+class MonteCarloEngine:
+    def __init__(self, inputs):
+        self.inputs = inputs
+        self.num_simulations = inputs['num_simulations']
+        
+        # --- State Initialization (Vectorized for N simulations) ---
+        # Long-term portfolio
+        self.long_term_value = np.full(self.num_simulations, inputs['initial_portfolio_value'], dtype=np.float64)
+        self.long_term_basis = np.full(self.num_simulations, inputs['initial_cost_basis'], dtype=np.float64)
+        
+        # Short-term buckets: Shape (N, 12). Column 0 is oldest (Asset Aging), Column 11 is newest.
+        self.short_term_values = np.zeros((self.num_simulations, 12), dtype=np.float64)
+        self.short_term_basis = np.zeros((self.num_simulations, 12), dtype=np.float64)
+        
+        # Margin Loan & Carryover
+        self.margin_loan = np.zeros(self.num_simulations, dtype=np.float64)
+        self.net_investment_loss_carryover = np.zeros(self.num_simulations, dtype=np.float64)
+        
+        # History
+        self.full_net_worth_history = [] # Will store (N,) array for each month
+        
+        # Pre-calculate constant params
+        self.portfolio_annual_return = inputs['portfolio_annual_return']
+        self.portfolio_annual_std_dev = inputs['portfolio_annual_std_dev']
+        
+        # Adjust monthly return for volatility drag
+        self.geometric_monthly_return = (1 + self.portfolio_annual_return)**(1/12) - 1
+        self.monthly_std_dev = self.portfolio_annual_std_dev / np.sqrt(12)
+        self.monthly_return_loc = self.geometric_monthly_return + 0.5 * (self.monthly_std_dev**2)
+        
+        self.margin_loan_annual_avg_interest_rate = inputs['margin_loan_annual_avg_interest_rate']
+        self.margin_loan_annual_interest_rate_std_dev = inputs['margin_loan_annual_interest_rate_std_dev']
+        
+        self.monthly_margin_rate = (1 + self.margin_loan_annual_avg_interest_rate)**(1/12) - 1
+        self.monthly_margin_rate_std_dev = self.margin_loan_annual_interest_rate_std_dev / np.sqrt(12)
+        
+        self.return_distribution_model = inputs.get('return_distribution_model', 'Normal')
+        self.return_distribution_df = inputs.get('return_distribution_df', 5)
+        self.interest_rate_distribution_model = inputs.get('interest_rate_distribution_model', 'Normal')
+        self.interest_rate_distribution_df = inputs.get('interest_rate_distribution_df', 5)
 
-    Args:
-        inputs (dict): A dictionary containing all the user-defined simulation parameters.
-
-    Returns:
-        tuple: A tuple containing:
-            - results (dict): A dictionary containing the aggregated simulation results.
-            - all_simulations_net_worth (list): A list of lists, where each inner list
-              contains the net worth for each month of a single simulation.
-    """
-
-    # --- Helper function for random number generation --- 
-    def _get_random_number(model, loc, scale, df=None):
+    def _get_random_values(self, model, loc, scale, df, size):
         if model == "Student's t":
-            # The standard_t distribution has a variance of df/(df-2) for df > 2
-            # We need to scale it to have the desired standard deviation (scale)
-            if df is None or df <= 2:
-                df = 5 # Fallback to a reasonable default
+            if df is None or df <= 2: df = 5
             scaled_std = scale / np.sqrt(df / (df - 2))
-            return loc + np.random.standard_t(df) * scaled_std
+            return loc + np.random.standard_t(df, size=size) * scaled_std
         elif model == 'Laplace':
-            # The Laplace distribution scale parameter 'b' is std/sqrt(2)
-            return np.random.laplace(loc, scale / np.sqrt(2))
-        else: # Default to Normal
-            return np.random.normal(loc, scale)
+             return np.random.laplace(loc, scale / np.sqrt(2), size=size)
+        else: # Normal
+            return np.random.normal(loc, scale, size=size)
 
+    def step_year(self, annual_inputs, year_index, events=None):
+        """
+        Runs the simulation for 12 months (one year).
+        annual_inputs: dict with keys 'annual_spending', 'enable_margin_investing', 'margin_investing_buffer'
+        events: list of dicts, e.g., {'type': 'market_shock', 'magnitude': -0.2}
+        """
+        monthly_spending = annual_inputs['annual_spending'] / 12
+        enable_margin_investing = annual_inputs.get('enable_margin_investing', False)
+        margin_investing_buffer = annual_inputs.get('margin_investing_buffer', 0.10)
+        
+        monthly_passive_income = self.inputs['monthly_passive_income']
+        annual_dividend_yield = self.inputs['annual_dividend_yield']
+        brokerage_margin_limit = self.inputs['brokerage_margin_limit']
+        
+        # Event processing
+        market_shock = 0
+        expense_shock = 0
+        if events:
+            for e in events:
+                if e['type'] == 'market_shock':
+                    market_shock = e.get('magnitude', 0)
+                elif e['type'] == 'expense_shock':
+                    expense_shock = e.get('amount', 0)
 
-    # Extract inputs from the dictionary
-    initial_portfolio_value = inputs['initial_portfolio_value']
-    initial_cost_basis = inputs['initial_cost_basis']
-    annual_spending = inputs['annual_spending']
-    monthly_passive_income = inputs['monthly_passive_income']
-    portfolio_annual_return = inputs['portfolio_annual_return']
-    portfolio_annual_std_dev = inputs['portfolio_annual_std_dev']
-    annual_dividend_yield = inputs['annual_dividend_yield']
-    margin_loan_annual_avg_interest_rate = inputs['margin_loan_annual_avg_interest_rate']
-    margin_loan_annual_interest_rate_std_dev = inputs['margin_loan_annual_interest_rate_std_dev']
-    brokerage_margin_limit = inputs['brokerage_margin_limit']
-    federal_tax_free_gain_limit = inputs['federal_tax_free_gain_limit']
-    tax_harvesting_profit_threshold = inputs['tax_harvesting_profit_threshold']
-    num_simulations = inputs['num_simulations']
-    # New distribution inputs
-    return_distribution_model = inputs.get('return_distribution_model', 'Normal')
-    return_distribution_df = inputs.get('return_distribution_df', 5)
-    interest_rate_distribution_model = inputs.get('interest_rate_distribution_model', 'Normal')
-    interest_rate_distribution_df = inputs.get('interest_rate_distribution_df', 5)
-    enable_margin_investing = inputs.get('enable_margin_investing', False)
-    margin_investing_buffer = inputs.get('margin_investing_buffer', 0.10)
-
-    # --- Simulation setup ---
-    num_months = 120
-    monthly_spending = annual_spending / 12
-    # Adjust monthly return for volatility drag so median outcome matches target
-    geometric_monthly_return = (1 + portfolio_annual_return)**(1/12) - 1
-    monthly_std_dev = portfolio_annual_std_dev / np.sqrt(12)
-    monthly_return = geometric_monthly_return + 0.5 * (monthly_std_dev**2)
-
-    monthly_margin_rate = (1 + margin_loan_annual_avg_interest_rate)**(1/12) - 1
-    monthly_margin_rate_std_dev = margin_loan_annual_interest_rate_std_dev / np.sqrt(12)
-
-    all_simulations_net_worth = []
-
-    for _ in range(num_simulations):
-        # --- Initialize scenario variables ---
-        long_term_value = initial_portfolio_value
-        long_term_basis = initial_cost_basis
-        # A list of 12 tuples, each representing a monthly bucket of (value, basis)
-        short_term_monthly_buckets = [(0, 0)] * 12
-        margin_loan = 0
-
-        net_investment_loss_carryover = 0
-        total_margin_interest_paid_this_year = 0
-        gains_realized_this_year = 0
-        total_dividend_income_this_year = 0
-
-        monthly_net_worth = []
-
-        for month in range(1, num_months + 1):
-            # --- Monthly simulation loop ---
-
-            # Step 1: Asset Aging (FIFO)
-            # Age out the oldest short-term bucket into the long-term portfolio
-            aged_value, aged_basis = short_term_monthly_buckets.pop(0)
-            long_term_value += aged_value
-            long_term_basis += aged_basis
-            # Add a new empty bucket for the current month's acquisitions
-            short_term_monthly_buckets.append((0, 0))
-
-            # Step 2: Calculate Market Returns & Update Portfolio
-            random_monthly_return = _get_random_number(
-                return_distribution_model,
-                monthly_return,
-                monthly_std_dev,
-                return_distribution_df
+        # Loop 12 months
+        for m in range(12):
+            month_abs = year_index * 12 + m + 1
+            
+            # --- Step 1: Asset Aging (FIFO) ---
+            # Oldest bucket (col 0) moves to long term
+            aged_val = self.short_term_values[:, 0]
+            aged_basis = self.short_term_basis[:, 0]
+            self.long_term_value += aged_val
+            self.long_term_basis += aged_basis
+            
+            # Shift everything left
+            self.short_term_values[:, :-1] = self.short_term_values[:, 1:]
+            self.short_term_basis[:, :-1] = self.short_term_basis[:, 1:]
+            # Clear newest bucket
+            self.short_term_values[:, -1] = 0
+            self.short_term_basis[:, -1] = 0
+            
+            # --- Step 2: Market Returns ---
+            random_returns = self._get_random_values(
+                self.return_distribution_model, 
+                self.monthly_return_loc, 
+                self.monthly_std_dev, 
+                self.return_distribution_df, 
+                self.num_simulations
             )
-            long_term_value *= (1 + random_monthly_return)
-            short_term_monthly_buckets = [
-                (value * (1 + random_monthly_return), basis)
-                for value, basis in short_term_monthly_buckets
-            ]
+            
+            # Apply shock if first month (or spread it? assuming 1-time shock in month 1 for simplicity)
+            if m == 0 and market_shock != 0:
+                # Override random return with shock? Or add to it? 
+                # Usually a shock replaces the random move or is a large drift.
+                # Let's add it to the random return to keep volatility valid.
+                random_returns += market_shock
 
-            # Step 2.5: Optional Margin Investing
+            self.long_term_value *= (1 + random_returns)
+            self.short_term_values *= (1 + random_returns[:, np.newaxis])
+            
+            # --- Step 2.5: Margin Investing ---
             if enable_margin_investing:
-                total_portfolio_value_for_investing = long_term_value + sum(b[0] for b in short_term_monthly_buckets)
-                # Borrow up to a user-defined buffer below the margin limit
-                investing_margin_limit = max(0, total_portfolio_value_for_investing * (brokerage_margin_limit - margin_investing_buffer))
+                total_portfolio = self.long_term_value + np.sum(self.short_term_values, axis=1)
+                investing_limit = np.maximum(0, total_portfolio * (brokerage_margin_limit - margin_investing_buffer))
+                borrowable = np.maximum(0, investing_limit - self.margin_loan)
+                
+                # Invest borrowing into newest bucket
+                self.margin_loan += borrowable
+                self.short_term_values[:, -1] += borrowable
+                self.short_term_basis[:, -1] += borrowable
 
-                if margin_loan < investing_margin_limit:
-                    amount_to_borrow_and_invest = investing_margin_limit - margin_loan
-                    margin_loan += amount_to_borrow_and_invest
-                    # Invest into the newest short-term bucket
-                    newest_bucket_value, newest_bucket_basis = short_term_monthly_buckets[-1]
-                    short_term_monthly_buckets[-1] = (
-                        newest_bucket_value + amount_to_borrow_and_invest,
-                        newest_bucket_basis + amount_to_borrow_and_invest
-                    )
-
-            # Step 3: Handle Quarterly Dividends
-            total_portfolio_value = long_term_value + sum(b[0] for b in short_term_monthly_buckets)
-            if month % 3 == 0:
-                dividend_payment = total_portfolio_value * (annual_dividend_yield / 4)
-                margin_loan -= dividend_payment
-                total_dividend_income_this_year += dividend_payment
-
-            # Step 4: Cover Expenses & Update Margin Loan
-            cash_shortfall = monthly_spending - monthly_passive_income
-            margin_loan += cash_shortfall
-            current_monthly_margin_rate = _get_random_number(
-                interest_rate_distribution_model,
-                monthly_margin_rate,
-                monthly_margin_rate_std_dev,
-                interest_rate_distribution_df
+            # --- Step 3: Dividends (Quarterly) ---
+            if (month_abs) % 3 == 0:
+                total_portfolio = self.long_term_value + np.sum(self.short_term_values, axis=1)
+                divs = total_portfolio * (annual_dividend_yield / 4)
+                self.margin_loan -= divs
+                # Track divs for tax (simplified: accumulated annual var not needed for state logic yet? 
+                # verify_interactive_logic might need exact match. Original accumulates `total_dividend_income_this_year`)
+                # We'll need to track this if we implement the tax calc at year end.
+                # Let's add an instance var for current year accumulation if not already.
+                if not hasattr(self, 'current_year_divs'): self.current_year_divs = np.zeros(self.num_simulations)
+                self.current_year_divs += divs
+            
+            # --- Step 4: Expenses & Margin Interest ---
+            current_spending = monthly_spending
+            if m == 0 and expense_shock != 0:
+                current_spending += expense_shock
+                
+            shortfall = current_spending - monthly_passive_income
+            self.margin_loan += shortfall
+            
+            margin_rates = self._get_random_values(
+                self.interest_rate_distribution_model,
+                self.monthly_margin_rate,
+                self.monthly_margin_rate_std_dev,
+                self.interest_rate_distribution_df,
+                self.num_simulations
             )
-            monthly_margin_interest = margin_loan * current_monthly_margin_rate
-            margin_loan += monthly_margin_interest
-            total_margin_interest_paid_this_year += monthly_margin_interest
+            interest = self.margin_loan * margin_rates
+            self.margin_loan += interest
+            
+            if not hasattr(self, 'current_year_interest'): self.current_year_interest = np.zeros(self.num_simulations)
+            self.current_year_interest += interest
 
-            # Step 5: Check for Forced Selling (Deleveraging)
-            short_term_value = sum(b[0] for b in short_term_monthly_buckets)
-            total_portfolio_value = long_term_value + short_term_value
-            margin_limit = max(0, total_portfolio_value * brokerage_margin_limit)
-            if margin_loan > margin_limit:
-                amount_to_sell = (margin_loan - margin_limit) / (1 - brokerage_margin_limit)
-                sell_from_long_term = 0
-                if long_term_value > 0:
-                    sell_from_long_term = min(amount_to_sell, long_term_value)
-                    gain_from_lt_sale = (sell_from_long_term / long_term_value) * (long_term_value - long_term_basis)
-                    long_term_basis -= (sell_from_long_term / long_term_value) * long_term_basis
-                    long_term_value -= sell_from_long_term
-                    gains_realized_this_year += gain_from_lt_sale
-                    margin_loan -= sell_from_long_term
-
-                amount_to_sell_from_st = amount_to_sell - sell_from_long_term
-                if amount_to_sell_from_st > 0 and short_term_value > 0:
-                    # Sell from short-term buckets, LIFO (newest first)
-                    for i in range(len(short_term_monthly_buckets) - 1, -1, -1):
-                        if amount_to_sell_from_st <= 0:
-                            break
-                        bucket_value, bucket_basis = short_term_monthly_buckets[i]
-                        if bucket_value > 0:
-                            sell_from_this_bucket = min(amount_to_sell_from_st, bucket_value)
-
-                            gain_from_bucket = (sell_from_this_bucket / bucket_value) * (bucket_value - bucket_basis)
-                            new_bucket_basis = bucket_basis - (sell_from_this_bucket / bucket_value) * bucket_basis
-                            new_bucket_value = bucket_value - sell_from_this_bucket
-                            short_term_monthly_buckets[i] = (new_bucket_value, new_bucket_basis)
-
-                            gains_realized_this_year += gain_from_bucket
-                            margin_loan -= sell_from_this_bucket
-                            amount_to_sell_from_st -= sell_from_this_bucket
-
-
-            # Step 6: Execute End-of-Year Tax Strategy
-            if month % 12 == 0:
-                unrealized_long_term_gain = long_term_value - long_term_basis
-                if long_term_value > 0:
-                    unrealized_long_term_gain_percentage = unrealized_long_term_gain / long_term_value
-                else:
-                    unrealized_long_term_gain_percentage = 0
-
-
-                if unrealized_long_term_gain_percentage > tax_harvesting_profit_threshold:
-                    total_investment_income_so_far = gains_realized_this_year + total_dividend_income_this_year
-                    gains_to_harvest = federal_tax_free_gain_limit - total_investment_income_so_far
-
-                    if gains_to_harvest > 0 and unrealized_long_term_gain > 0:
-                        value_to_harvest = gains_to_harvest / unrealized_long_term_gain_percentage
-                        if value_to_harvest > long_term_value:
-                            value_to_harvest = long_term_value
-
-                        harvested_basis = (value_to_harvest / long_term_value) * long_term_basis
-                        actual_gain_harvested = value_to_harvest - harvested_basis
-                        long_term_value -= value_to_harvest
-                        long_term_basis -= harvested_basis
-                        # Add the harvested amount to the newest short-term bucket
-                        newest_bucket_value, newest_bucket_basis = short_term_monthly_buckets[-1]
-                        short_term_monthly_buckets[-1] = (
-                            newest_bucket_value + value_to_harvest,
-                            newest_bucket_basis + value_to_harvest # Stepped-up basis
-                        )
-                        gains_realized_this_year += actual_gain_harvested #gains_to_harvest
-
-                # Calculate and "Pay" California Tax
-                total_investment_income = gains_realized_this_year + total_dividend_income_this_year
-                net_investment_income = total_investment_income - total_margin_interest_paid_this_year
+            # --- Step 5: Forced Selling (Deleveraging) ---
+            total_short = np.sum(self.short_term_values, axis=1)
+            total_value = self.long_term_value + total_short
+            
+            # Safety check to avoid div by zero
+            # If total_value is <= 0, we are essentially bust, loan is effectively infinite ratio.
+            # But let's follow logic:
+            limit = np.maximum(0, total_value * brokerage_margin_limit)
+            excess = self.margin_loan - limit
+            mask_sell = excess > 0 # Boolean array of sims that need to sell
+            
+            if np.any(mask_sell):
+                # Vectorized selling is tricky with logic branches.
+                # However, since mask_sell is subset, we can operate on subset or use `np.where`.
+                # Given complexity of "LT then ST LIFO", maybe iterate just the masked indices?
+                # Or use vectorized math with masks.
                 
-                # Apply loss carryover
-                taxable_income = net_investment_income + net_investment_loss_carryover
+                # Amount to sell
+                amt = np.zeros(self.num_simulations)
+                amt[mask_sell] = excess[mask_sell] / (1 - brokerage_margin_limit)
                 
-                # Simplified CA tax calculation
-                ca_tax_due = max(0, taxable_income * 0.093)
-                margin_loan += ca_tax_due
+                # Sell LT
+                # available LT
+                lt_avail = self.long_term_value
+                sell_lt = np.minimum(amt, lt_avail)
+                sell_lt = np.maximum(0, sell_lt) # clamp
+                
+                # Calc gains from LT sale
+                ratio_lt = np.zeros(self.num_simulations)
+                # avoid div/0
+                mask_lt_pos = lt_avail > 0
+                ratio_lt[mask_lt_pos] = sell_lt[mask_lt_pos] / lt_avail[mask_lt_pos]
+                
+                gain_lt = ratio_lt * (self.long_term_value - self.long_term_basis)
+                
+                self.long_term_value -= sell_lt
+                self.long_term_basis -= (ratio_lt * self.long_term_basis)
+                self.margin_loan -= sell_lt
+                
+                if not hasattr(self, 'current_year_gains'): self.current_year_gains = np.zeros(self.num_simulations)
+                self.current_year_gains += gain_lt
+                
+                # Sell ST (LIFO)
+                amt_remaining = amt - sell_lt
+                # Iterate buckets backwards 11 -> 0
+                for i in range(11, -1, -1):
+                    # Mask for those who still need to sell
+                    mask_st = amt_remaining > 1e-9 # float tolerance
+                    if not np.any(mask_st):
+                        break
+                        
+                    b_val = self.short_term_values[:, i]
+                    b_basis = self.short_term_basis[:, i]
+                    
+                    sell_st = np.minimum(amt_remaining, b_val)
+                    sell_st[~mask_st] = 0 # only sell if needed
+                    
+                    ratio_st = np.zeros(self.num_simulations)
+                    mask_b_pos = b_val > 0
+                    ratio_st[mask_b_pos] = sell_st[mask_b_pos] / b_val[mask_b_pos]
+                    
+                    gain_st = ratio_st * (b_val - b_basis)
+                    
+                    self.short_term_values[:, i] -= sell_st
+                    # basis update
+                    self.short_term_basis[:, i] -= (ratio_st * b_basis)
+                    
+                    self.margin_loan -= sell_st
+                    self.current_year_gains += gain_st
+                    amt_remaining -= sell_st
 
-                # Update loss carryover for next year
-                if taxable_income < 0:
-                    net_investment_loss_carryover = taxable_income
-                else:
-                    net_investment_loss_carryover = 0
+            # --- Record Net Worth ---
+            nw = (self.long_term_value + np.sum(self.short_term_values, axis=1)) - self.margin_loan
+            # Copy to history
+            self.full_net_worth_history.append(nw.copy())
 
-                # Reset annual counters
-                total_margin_interest_paid_this_year = 0
-                gains_realized_this_year = 0
-                total_dividend_income_this_year = 0
+        # --- End of Year: Tax Strategy ---
+        self._run_tax_strategy()
+        
+        # --- Return Stats for the Year ---
+        # Current NW (last month)
+        current_nw = self.full_net_worth_history[-1]
+        
+        return {
+            'avg_net_worth': np.mean(current_nw),
+            'min_net_worth': np.min(current_nw),
+            'max_net_worth': np.max(current_nw),
+            'median_net_worth': np.median(current_nw),
+            'p25': np.percentile(current_nw, 25),
+            'p75': np.percentile(current_nw, 75),
+            'pct_survived': np.mean(current_nw > 0)
+        }
 
-            # Step 7: Record Net Worth
-            net_worth = (long_term_value + sum(b[0] for b in short_term_monthly_buckets)) - margin_loan
-            monthly_net_worth.append(net_worth)
+    def _run_tax_strategy(self):
+        # Unpack params
+        threshold = self.inputs['tax_harvesting_profit_threshold']
+        limit = self.inputs['federal_tax_free_gain_limit']
+        
+        # Ensure accumulator arrays exist
+        if not hasattr(self, 'current_year_gains'): self.current_year_gains = np.zeros(self.num_simulations)
+        if not hasattr(self, 'current_year_divs'): self.current_year_divs = np.zeros(self.num_simulations)
+        if not hasattr(self, 'current_year_interest'): self.current_year_interest = np.zeros(self.num_simulations)
+        
+        # 1. Gain Harvesting
+        unrealized = self.long_term_value - self.long_term_basis
+        ratio = np.zeros(self.num_simulations)
+        mask_pos = self.long_term_value > 0
+        ratio[mask_pos] = unrealized[mask_pos] / self.long_term_value[mask_pos]
+        
+        # Identify who harvests
+        mask_harvest = (ratio > threshold) & (unrealized > 0)
+        
+        income_so_far = self.current_year_gains + self.current_year_divs
+        room = limit - income_so_far
+        
+        # Only if room > 0
+        mask_harvest &= (room > 0)
+        
+        if np.any(mask_harvest):
+            # value to harvest = room / ratio
+            # Must not exceed LT value
+            val_to_harvest = np.zeros(self.num_simulations)
+            val_to_harvest[mask_harvest] = room[mask_harvest] / ratio[mask_harvest]
+            
+            # clamp to actual LT value
+            val_to_harvest = np.minimum(val_to_harvest, self.long_term_value)
+            
+            # Basis of harvested portion
+            # Basis of harvested portion
+            basis_harvested = np.zeros(self.num_simulations)
+            # Only calculate where LT value is positive to avoid div/0
+            mask_calc = mask_harvest & (self.long_term_value > 1e-9)
+            
+            basis_harvested[mask_calc] = (val_to_harvest[mask_calc] / self.long_term_value[mask_calc]) * self.long_term_basis[mask_calc]
+            # fix potential nan if lt_value is 0 (though mask_pos handles it?)
+            basis_harvested[np.isnan(basis_harvested)] = 0
+            
+            real_gain = val_to_harvest - basis_harvested
+            
+            # Execute: Remove from LT, Add to ST (newest)
+            self.long_term_value[mask_harvest] -= val_to_harvest[mask_harvest]
+            self.long_term_basis[mask_harvest] -= basis_harvested[mask_harvest]
+            
+            self.short_term_values[:, -1][mask_harvest] += val_to_harvest[mask_harvest]
+            # Stepped up basis!
+            self.short_term_basis[:, -1][mask_harvest] += val_to_harvest[mask_harvest] 
+            
+            self.current_year_gains[mask_harvest] += real_gain[mask_harvest]
 
-            # Stop simulation if average net worth is below zero
-            # if all_simulations_net_worth and np.mean([sim[-1] for sim in all_simulations_net_worth if sim]) < 0:
-            #     break
+        # 2. Variable State Tax (CA)
+        total_income = self.current_year_gains + self.current_year_divs
+        net_inc = total_income - self.current_year_interest
+        
+        taxable = net_inc + self.net_investment_loss_carryover
+        tax = np.maximum(0, taxable * 0.093)
+        self.margin_loan += tax
+        
+        # Carryover update
+        self.net_investment_loss_carryover = np.minimum(0, taxable)
+        # If positive, it resets to 0 (implied by minimum(0, ...)? No, if taxable > 0, carryover is 0)
+        # Logic: if taxable < 0, carryover = taxable. Else 0.
+        self.net_investment_loss_carryover = np.where(taxable < 0, taxable, 0)
+        
+        # Reset accumulations
+        self.current_year_gains[:] = 0
+        self.current_year_divs[:] = 0
+        self.current_year_interest[:] = 0
 
-        all_simulations_net_worth.append(monthly_net_worth)
 
-    # --- Final Aggregation ---
-    max_len = max(len(sim) for sim in all_simulations_net_worth if sim)
-    padded_simulations = [sim + [sim[-1]] * (max_len - len(sim)) if sim else [0] * max_len for sim in all_simulations_net_worth]
-
+# Wrapper for backwards compatibility
+def run_simulation(inputs):
+    engine = MonteCarloEngine(inputs)
+    
+    # 10 years
+    for y in range(10):
+        # Standard inputs per year
+        yr_inputs = {
+            'annual_spending': inputs['annual_spending'],
+            'enable_margin_investing': inputs.get('enable_margin_investing', False),
+            'margin_investing_buffer': inputs.get('margin_investing_buffer', 0.10)
+        }
+        engine.step_year(yr_inputs, y)
+        
+    # Aggregate results
+    # engine.full_net_worth_history is List of (N,) arrays. len = 120.
+    # We want [ [m1, m2...], ... ] for each sim?
+    # No, existing returns:
+    # results (dict), all_simulations_net_worth (list of lists)
+    
+    # Convert history: List of (N,) -> (120, N) -> (N, 120)
+    history_arr = np.array(engine.full_net_worth_history) # shape (120, N)
+    all_sims_nw = history_arr.T.tolist() # shape (N, 120) -> list of lists
+    
+    # Compute Aggregates
+    # Pad if failed? logic in original code handles "early failure" by breaking loop for that sim?
+    # No, original code: if avg < 0 breaks.
+    # Note: Vectorized approach runs all 120 months regardless of negative NW.
+    # "padded_simulations" in original code implies some might be shorter?
+    # Original: `if all_simulations_net_worth and np.mean(...) < 0: break`. That breaks the *whole* simulation loop (all sims).
+    # My engine runs full 120 months.
+    
+    # Check max len:
+    padded = np.array(all_sims_nw) # (N, 120) unless jagged? It's not jagged here.
+    
     results = {
-        'max_net_worth': np.max(padded_simulations, axis=0),
-        'p99_net_worth': np.percentile(padded_simulations, 99, axis=0),
-        'p75_net_worth': np.percentile(padded_simulations, 75, axis=0),
-        'median_net_worth': np.median(padded_simulations, axis=0),
-        'avg_net_worth': np.mean(padded_simulations, axis=0),
-        'p25_net_worth': np.percentile(padded_simulations, 25, axis=0),
-        'p01_net_worth': np.percentile(padded_simulations, 1, axis=0),
-        'min_net_worth': np.min(padded_simulations, axis=0)
+        'max_net_worth': np.max(padded, axis=0),
+        'p99_net_worth': np.percentile(padded, 99, axis=0),
+        'p75_net_worth': np.percentile(padded, 75, axis=0),
+        'median_net_worth': np.median(padded, axis=0),
+        'avg_net_worth': np.mean(padded, axis=0),
+        'p25_net_worth': np.percentile(padded, 25, axis=0),
+        'p01_net_worth': np.percentile(padded, 1, axis=0),
+        'min_net_worth': np.min(padded, axis=0)
     }
+    
+    return results, all_sims_nw
 
-    return results, all_simulations_net_worth
-
-def plot_results(results):
-    """
-    Plots the simulation results.
-
-    Args:
-        results (dict): A dictionary containing the aggregated simulation results.
-    """
-    months = range(1, len(results['avg_net_worth']) + 1)
-    plt.figure(figsize=(12, 8))
-    plt.plot(months, results['max_net_worth'], label='Max Net Worth', color='green', linestyle='--')
-    plt.plot(months, results['p99_net_worth'], label='99th Percentile', color='green', linestyle='-.')
-    plt.plot(months, results['p75_net_worth'], label='75th Percentile', color='green')
-    plt.plot(months, results['median_net_worth'], label='Median Net Worth', color='purple')
-    plt.plot(months, results['avg_net_worth'], label='Average Net Worth', color='blue')
-    plt.plot(months, results['p25_net_worth'], label='25th Percentile', color='red')
-    plt.plot(months, results['p01_net_worth'], label='1th Percentile', color='red', linestyle='-.')
-    plt.plot(months, results['min_net_worth'], label='Min Net Worth', color='red', linestyle='--')
-    plt.fill_between(months, results['p25_net_worth'], results['p75_net_worth'], color='gray', alpha=0.2, label='Interquartile Range')
-    plt.title('Monte Carlo Retirement Simulation')
-    plt.xlabel('Months')
-    plt.ylabel('Net Worth ($)')
-    plt.legend()
-    plt.grid(True)
-    # Format y-axis to display currency
-    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:,.0f}'))
-    plt.show()
-
-
-def main():
-    """
-    Main function to run the simulation with default inputs and plot the results.
-    """
-    # --- User-Defined Inputs ---
+if __name__ == '__main__':
+    # Default execution
     inputs = {
         'initial_portfolio_value': 2000000,
         'initial_cost_basis': 1400000,
@@ -310,14 +398,14 @@ def main():
         'enable_margin_investing': False,
         'margin_investing_buffer': 0.10
     }
-
+    
     results, _ = run_simulation(inputs)
-
-    # --- Print and Plot Results ---
+    # Simple print as before...
+    # (Copied from original main)
     print("--- Simulation Results ---")
     print(f"{ 'Month':<10}{'Min Net Worth':<20}{'Avg Net Worth':<20}{'Max Net Worth':<20}")
     print("-" * 70)
-
+    
     stop_month = -1
     for i, avg_net_worth in enumerate(results['avg_net_worth']):
         if avg_net_worth < 0:
@@ -331,17 +419,3 @@ def main():
             f"${results['avg_net_worth'][i]:<19,.2f}"
             f"${results['max_net_worth'][i]:<19,.2f}"
         )
-
-    if stop_month != -1:
-        print(f"\n--- Simulation Failed ---")
-        print(f"The average net worth dropped below zero in month {stop_month}.")
-    else:
-        final_avg_net_worth = results['avg_net_worth'][-1]
-        print(f"\n--- Strategy Survived 10 Years ---")
-        print(f"The average net worth after 10 years is ${final_avg_net_worth:,.2f}.")
-
-    plot_results(results)
-
-
-if __name__ == '__main__':
-    main()
