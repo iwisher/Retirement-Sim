@@ -1,6 +1,7 @@
 numpy
 matplotlib
 gradio
+huggingface_hub<0.25.0
 pandas
 google-generativeai
 kivy

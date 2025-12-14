@@ -4,6 +4,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from simulation import run_simulation, MonteCarloEngine
 import google.generativeai as genai
+import copy
+
 
 # --- Standard Simulation Function (Existing) ---
 def run_and_display_simulation(
@@ -71,7 +73,7 @@ def get_gemini_analysis(api_key, summary_text, df):
     """Analyzes the simulation results using the Gemini Pro API."""
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-2.0-flash') # Using faster model
+        model = genai.GenerativeModel('gemini-2.5-flash') # Using faster model
 
         system_prompt = '''You are a helpful financial analyst assistant.'''
         user_query = f"""
@@ -178,12 +180,72 @@ def init_interactive_mode(
         "## 🏁 Simulation Started\nYear 0 Complete. Ready for Year 1.",
         "No events yet.",
         create_empty_plot(),
-        gr.update(visible=False) # Hide setup, show game
+        gr.update(visible=False), # Hide setup, show game
+        None, # backup_engine
+        None, # prev_stats_for_comparison
+        gr.update(visible=False, value=None) # comparison_plot
     )
 
-def step_interactive_year(engine, year, pending_spending, pending_margin_enable, pending_margin_buffer):
+def reset_game():
+    return (
+        None, # engine
+        0,    # year
+        gr.update(visible=False), # game container
+        "## Game Reset",
+        "",
+        create_empty_plot(),
+        gr.update(visible=True), # setup box
+        None, # backup
+        None, # prev_stats
+        gr.update(visible=False, value=None) # comparison_plot
+    )
+
+def retry_last_year(backup_engine, year, last_stats_ctx, current_engine_to_snapshot):
+    if backup_engine is None or year <= 0:
+        return gr.update(), gr.update(), "## ❌ Cannot Rewind", "No history to rewind to.", gr.update(), gr.update(), None, gr.update()
+    
+    # Restore engine
+    restored_engine = copy.deepcopy(backup_engine)
+    restored_year = year - 1
+    
+    # Message
+    msg = f"## ⏪ Rewound to Start of Year {restored_year}\n"
+    msg += "Adjust your strategy and try again."
+    
+    # Plot (Live - showing state at restored year)
+    fig_live = create_plot_from_engine(restored_engine)
+    
+    # Comparison Plot (Global snapshot of the path we just abandoned)
+    # Use current_engine_to_snapshot (which has the "bad" result)
+    if current_engine_to_snapshot:
+        fig_compare = create_plot_from_engine(current_engine_to_snapshot)
+        if hasattr(fig_compare, 'gca'):
+            fig_compare.gca().set_title("Previous Attempt (Abandoned)")
+        plot_update = gr.update(value=fig_compare, visible=True)
+    else:
+        plot_update = gr.update(visible=False)
+
+    return (
+        restored_engine,
+        restored_year,
+        msg,
+        "Replaying year...",
+        fig_live,
+        backup_engine, # Keep backup? Or clear? If we rewind 2 steps? 
+                       # Simplest: 1 level undo. So backup becomes None? 
+                       # Or we keep it as is (idempotent)? 
+                       # If we rewind to Y0, we are at Y0. Can we rewind to -1? No.
+                       # Let's keep backup as is, but practically it's the state at Y0.
+        last_stats_ctx, # Pass this as "prev_attempt_stats" to step function
+        plot_update # Show comparison plot
+    )
+
+def step_interactive_year(engine, year, pending_spending, pending_margin_enable, pending_margin_buffer, prev_stats_comparison):
     if year >= 10:
-        return engine, year, "## 🏁 Simulation Complete", "You have finished the 10-year simulation.", create_plot_from_engine(engine)
+        return engine, year, "## 🏁 Simulation Complete", "You have finished the 10-year simulation.", create_plot_from_engine(engine), None, None, None, gr.update()
+
+    # Snapshot for Undo
+    backup = copy.deepcopy(engine)
 
     # 1. Generate Random Events
     events = []
@@ -206,14 +268,43 @@ def step_interactive_year(engine, year, pending_spending, pending_margin_enable,
     # 3. Create Status String
     avg_nw = stats['avg_net_worth']
     survived = stats['pct_survived'] * 100
+    mkt_ret = stats.get('avg_market_return', 0.0)
+    marg_rate = stats.get('avg_margin_rate', 0.0)
     
     status_md = f"## Year {year} Complete\n"
-    status_md += f"**Avg Net Worth:** ${avg_nw:,.0f}  |  **Survival Chance:** {survived:.1f}%"
+    status_md += f"**Avg Net Worth:** ${avg_nw:,.0f}  |  **Survival Chance:** {survived:.1f}%\n"
+    status_md += f"**Realized Market Return:** {mkt_ret:.1f}%  |  **Avg Margin Rate:** {marg_rate:.1f}%"
+    
+    # Comparison Logic
+    if prev_stats_comparison:
+        old_nw = prev_stats_comparison['avg_net_worth']
+        delta = avg_nw - old_nw
+        icon = "🔺" if delta >= 0 else "🔻"
+        status_md += f"\n\n**🆚 vs Previous Attempt:** {icon} ${abs(delta):,.0f}"
     
     # 4. Plot
     fig = create_plot_from_engine(engine)
     
-    return engine, year, status_md, event_msg, fig
+    # Manage Comparison Plot Visibility
+    # User requested to keep the preview attempt even when simulating next year.
+    # So we only update it if we have something new, otherwise we leave it alone (it stays visible if it was visible).
+    if prev_stats_comparison:
+        # We just retried, so we keep the plot (which was set by retry logic? No, retry logic set the component value).
+        # Actually, wait. retry_last_year sets the plot.
+        # step_interactive_year receives 'prev_stats_comparison' if we ARE in that retry flow comparison step.
+        # But wait, if I hit "Next Year" AFTER retry, does step_interactive_year receive prev_stats_comparison?
+        # looking at bindings:
+        # btn_next_year.click(..., inputs=[..., last_stats_state], ...)
+        # If I retry, 'last_stats_state' is preserved/passed.
+        pass
+
+    # Simply: Always leave the comparison plot valid. Never hide it here.
+    # It starts hidden. It becomes visible in 'retry_last_year'.
+    # It only gets hidden on 'reset_game'.
+    plot_comp_update = gr.update()
+
+    # Return: engine, year, status, event_msg, plot, backup, current_stats (for comparison if next retry), comparison_stats (updated), comparison_plot (update)
+    return engine, year, status_md, event_msg, fig, backup, stats, None, plot_comp_update # Clear prev_stats_comparison after use
 
 def create_empty_plot():
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -319,7 +410,9 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
             
             # Interactive State
             engine_state = gr.State()
+            backup_engine_state = gr.State() # For Undo
             year_state = gr.State(0)
+            last_stats_state = gr.State() # For Comparison
             
             with gr.Group(visible=True) as game_setup_box:
                 gr.Markdown("### Initial Configuration")
@@ -338,10 +431,19 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
                         cur_margin_enable = gr.Checkbox(label="Enable Margin Investing")
                         cur_margin_buffer = gr.Slider(0, 50, value=10, label="Buffer (%)")
                         
-                        btn_next_year = gr.Button("Simulate Next Year ➡️")
+                        with gr.Row():
+                            btn_next_year = gr.Button("Simulate Next Year ➡️", variant="primary")
+                        with gr.Row():
+                            btn_retry = gr.Button("⏪ Undo & Retry Year")
+                            btn_reset = gr.Button("🔄 Reset Game")
+                        
+                        gr.Markdown("""
+                        **Survival Chance**: The percentage of simulations where your net worth remains above $0.
+                        """)
                         
                     with gr.Column(scale=2):
-                        live_plot = gr.Plot()
+                        live_plot = gr.Plot(label="Current Projection")
+                        comparison_plot = gr.Plot(visible=False, label="Previous Attempt")
             
             btn_start_game.click(
                 init_interactive_mode,
@@ -351,13 +453,24 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
                     margin_rate, margin_rate_std_dev, margin_limit, simulation_count, tax_harvesting_profit_threshold,
                     return_dist_model, return_dist_df, interest_rate_dist_model, interest_rate_dist_df
                 ],
-                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box]
+                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box, backup_engine_state, last_stats_state, comparison_plot]
             )
             
             btn_next_year.click(
                 step_interactive_year,
-                inputs=[engine_state, year_state, cur_spending, cur_margin_enable, cur_margin_buffer],
-                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot]
+                inputs=[engine_state, year_state, cur_spending, cur_margin_enable, cur_margin_buffer, last_stats_state],
+                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot, backup_engine_state, last_stats_state, last_stats_state, comparison_plot] 
+            )
+            
+            btn_retry.click(
+                retry_last_year,
+                inputs=[backup_engine_state, year_state, last_stats_state, engine_state],
+                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot, backup_engine_state, last_stats_state, comparison_plot]
+            )
+            
+            btn_reset.click(
+                reset_game,
+                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box, backup_engine_state, last_stats_state, comparison_plot]
             )
 
 if __name__ == "__main__":

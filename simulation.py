@@ -70,12 +70,20 @@ class MonteCarloEngine:
         # Event processing
         market_shock = 0
         expense_shock = 0
+        # Event processing
+        market_shock = 0
+        expense_shock = 0
         if events:
             for e in events:
                 if e['type'] == 'market_shock':
                     market_shock = e.get('magnitude', 0)
                 elif e['type'] == 'expense_shock':
                     expense_shock = e.get('amount', 0)
+                    
+        # Stats accumulation
+        self.year_market_returns = np.zeros(self.num_simulations)
+        self.year_margin_rates = np.zeros(self.num_simulations)
+
 
         # Loop 12 months
         for m in range(12):
@@ -113,6 +121,14 @@ class MonteCarloEngine:
 
             self.long_term_value *= (1 + random_returns)
             self.short_term_values *= (1 + random_returns[:, np.newaxis])
+            
+            # Accumulate market return (compounding)
+            # We want annual return: (1+r1)*(1+r2)... - 1
+            if m == 0:
+                self.year_market_returns = (1 + random_returns)
+            else:
+                self.year_market_returns *= (1 + random_returns)
+
             
             # --- Step 2.5: Margin Investing ---
             if enable_margin_investing:
@@ -154,6 +170,11 @@ class MonteCarloEngine:
             )
             interest = self.margin_loan * margin_rates
             self.margin_loan += interest
+            
+            # Accumulate margin rate (average)
+            # Simple average of monthly rates * 12 is approx annual APR
+            self.year_margin_rates += margin_rates * 12
+
             
             if not hasattr(self, 'current_year_interest'): self.current_year_interest = np.zeros(self.num_simulations)
             self.current_year_interest += interest
@@ -241,6 +262,13 @@ class MonteCarloEngine:
         # Current NW (last month)
         current_nw = self.full_net_worth_history[-1]
         
+        # Calculate realized stats for the year
+        # Market Return: Convert cumulative multiplier to percentage change
+        avg_market_return = np.mean(self.year_market_returns - 1) * 100
+        
+        # Margin Rate: Average of annualized monthly rates divided by 12 months (we summed them)
+        avg_margin_rate = np.mean(self.year_margin_rates / 12) * 100
+        
         return {
             'avg_net_worth': np.mean(current_nw),
             'min_net_worth': np.min(current_nw),
@@ -248,8 +276,11 @@ class MonteCarloEngine:
             'median_net_worth': np.median(current_nw),
             'p25': np.percentile(current_nw, 25),
             'p75': np.percentile(current_nw, 75),
-            'pct_survived': np.mean(current_nw > 0)
+            'pct_survived': np.mean(current_nw > 0),
+            'avg_market_return': avg_market_return,
+            'avg_margin_rate': avg_margin_rate
         }
+
 
     def _run_tax_strategy(self):
         # Unpack params
