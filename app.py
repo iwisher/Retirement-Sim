@@ -183,7 +183,9 @@ def init_interactive_mode(
         gr.update(visible=False), # Hide setup, show game
         None, # backup_engine
         None, # prev_stats_for_comparison
-        gr.update(visible=False, value=None) # comparison_plot
+        gr.update(visible=False, value=None), # comparison_plot
+        gr.update(visible=False), # comparison_box
+        None # comparison_context (dict)
     )
 
 def reset_game():
@@ -197,12 +199,70 @@ def reset_game():
         gr.update(visible=True), # setup box
         None, # backup
         None, # prev_stats
-        gr.update(visible=False, value=None) # comparison_plot
+        gr.update(visible=False, value=None), # comparison_plot
+        gr.update(visible=False), # comparison_box
+        None # comparison_context
     )
+
+def analyze_game_diff(api_key, comparison_context):
+    """
+    Uses Gemini to analyze the difference between two attempts.
+    comparison_context: {
+        'year': int,
+        'prev_decisions': dict,
+        'curr_decisions': dict,
+        'prev_stats': dict,
+        'curr_stats': dict
+    }
+    """
+    if not api_key:
+        yield "⚠️ Please enter your Gemini API Key in the Standard Simulation tab."
+        return
+        
+    if not comparison_context:
+        yield "No comparison context available."
+        return
+
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-2.5-flash')
+
+        system_prompt = "You are a financial retirement simulation analyst. Analyze the user's decision change and its impact."
+        
+        # Format data
+        curr_d = comparison_context.get('curr_decisions', {})
+        prev_d = comparison_context.get('prev_decisions', {})
+        curr_s = comparison_context.get('curr_stats', {})
+        prev_s = comparison_context.get('prev_stats', {})
+        
+        prompt = f"""
+        **Scenario:**
+        The user replayed Year {comparison_context.get('year')} of their retirement simulation with different inputs.
+        
+        **Decisions:**
+        - **Previous Attempt:** Spending: ${prev_d.get('annual_spending', 0):,.0f}, Margin Enabled: {prev_d.get('enable_margin_investing')}, Buffer: {prev_d.get('margin_investing_buffer', 0)*100:.1f}%
+        - **Current Attempt:** Spending: ${curr_d.get('annual_spending', 0):,.0f}, Margin Enabled: {curr_d.get('enable_margin_investing')}, Buffer: {curr_d.get('margin_investing_buffer', 0)*100:.1f}%
+        
+        **Outcomes:**
+        - **Previous Net Worth:** ${prev_s.get('avg_net_worth', 0):,.0f} (Survival: {prev_s.get('pct_survived', 0)*100:.1f}%)
+        - **Current Net Worth:** ${curr_s.get('avg_net_worth', 0):,.0f} (Survival: {curr_s.get('pct_survived', 0)*100:.1f}%)
+        
+        **Task:**
+        Explain briefly WHY the outcome changed based on the decision difference. Did the strategy improve? What factors (market return, margin rate) contributed?
+        """
+        
+        response = model.generate_content(prompt, stream=True)
+        output = ""
+        for chunk in response:
+            output += chunk.text
+            yield output
+
+    except Exception as e:
+        yield f"Error: {e}"
 
 def retry_last_year(backup_engine, year, last_stats_ctx, current_engine_to_snapshot):
     if backup_engine is None or year <= 0:
-        return gr.update(), gr.update(), "## ❌ Cannot Rewind", "No history to rewind to.", gr.update(), gr.update(), None, gr.update()
+        return gr.update(), gr.update(), "## ❌ Cannot Rewind", "No history to rewind to.", gr.update(), gr.update(), None, gr.update(), gr.update(), None
     
     # Restore engine
     restored_engine = copy.deepcopy(backup_engine)
@@ -215,15 +275,30 @@ def retry_last_year(backup_engine, year, last_stats_ctx, current_engine_to_snaps
     # Plot (Live - showing state at restored year)
     fig_live = create_plot_from_engine(restored_engine)
     
-    # Comparison Plot (Global snapshot of the path we just abandoned)
-    # Use current_engine_to_snapshot (which has the "bad" result)
+    # Comparison Plot & Context
+    comp_plot_update = gr.update(visible=False)
+    comp_box_update = gr.update(visible=False)
+    comp_context = None
+    
     if current_engine_to_snapshot:
         fig_compare = create_plot_from_engine(current_engine_to_snapshot)
         if hasattr(fig_compare, 'gca'):
             fig_compare.gca().set_title("Previous Attempt (Abandoned)")
-        plot_update = gr.update(value=fig_compare, visible=True)
-    else:
-        plot_update = gr.update(visible=False)
+        comp_plot_update = gr.update(value=fig_compare, visible=True)
+        
+        # Capture context for step function to populate later
+        # We need the PREVIOUS decisions to compare against.
+        # The 'current_engine_to_snapshot' has the history up to the point we are abandoning.
+        # The last entry in 'decision_history' is the one we are undoing.
+        prev_decisions = {}
+        if hasattr(current_engine_to_snapshot, 'decision_history') and current_engine_to_snapshot.decision_history:
+            prev_decisions = current_engine_to_snapshot.decision_history[-1]
+            
+        comp_context = {
+            'prev_stats': last_stats_ctx,
+            'prev_decisions': prev_decisions,
+            'pending_comparison': True # Flag to tell step function to compute comparison
+        }
 
     return (
         restored_engine,
@@ -231,23 +306,21 @@ def retry_last_year(backup_engine, year, last_stats_ctx, current_engine_to_snaps
         msg,
         "Replaying year...",
         fig_live,
-        backup_engine, # Keep backup? Or clear? If we rewind 2 steps? 
-                       # Simplest: 1 level undo. So backup becomes None? 
-                       # Or we keep it as is (idempotent)? 
-                       # If we rewind to Y0, we are at Y0. Can we rewind to -1? No.
-                       # Let's keep backup as is, but practically it's the state at Y0.
-        last_stats_ctx, # Pass this as "prev_attempt_stats" to step function
-        plot_update # Show comparison plot
+        backup_engine, 
+        last_stats_ctx, 
+        comp_plot_update,
+        comp_box_update, # Hide comparison box until we finish the step
+        comp_context     # Pass partial context (prev data)
     )
 
-def step_interactive_year(engine, year, pending_spending, pending_margin_enable, pending_margin_buffer, prev_stats_comparison):
+def step_interactive_year(engine, year, pending_spending, pending_margin_enable, pending_margin_buffer, prev_stats_comparison, comparison_context_state):
     if year >= 10:
-        return engine, year, "## 🏁 Simulation Complete", "You have finished the 10-year simulation.", create_plot_from_engine(engine), None, None, None, gr.update()
+        return engine, year, "## 🏁 Simulation Complete", "You have finished the 10-year simulation.", create_plot_from_engine(engine), None, None, gr.update(), gr.update(), gr.update(), None
 
     # Snapshot for Undo
     backup = copy.deepcopy(engine)
 
-    # 1. Generate Random Events
+    # 1. Generate Random Events (Same as before)
     events = []
     event_msg = "No massive events this year."
     if np.random.random() < 0.10:
@@ -285,26 +358,44 @@ def step_interactive_year(engine, year, pending_spending, pending_margin_enable,
     # 4. Plot
     fig = create_plot_from_engine(engine)
     
-    # Manage Comparison Plot Visibility
-    # User requested to keep the preview attempt even when simulating next year.
-    # So we only update it if we have something new, otherwise we leave it alone (it stays visible if it was visible).
-    if prev_stats_comparison:
-        # We just retried, so we keep the plot (which was set by retry logic? No, retry logic set the component value).
-        # Actually, wait. retry_last_year sets the plot.
-        # step_interactive_year receives 'prev_stats_comparison' if we ARE in that retry flow comparison step.
-        # But wait, if I hit "Next Year" AFTER retry, does step_interactive_year receive prev_stats_comparison?
-        # looking at bindings:
-        # btn_next_year.click(..., inputs=[..., last_stats_state], ...)
-        # If I retry, 'last_stats_state' is preserved/passed.
-        pass
-
-    # Simply: Always leave the comparison plot valid. Never hide it here.
-    # It starts hidden. It becomes visible in 'retry_last_year'.
-    # It only gets hidden on 'reset_game'.
-    plot_comp_update = gr.update()
-
-    # Return: engine, year, status, event_msg, plot, backup, current_stats (for comparison if next retry), comparison_stats (updated), comparison_plot (update)
-    return engine, year, status_md, event_msg, fig, backup, stats, None, plot_comp_update # Clear prev_stats_comparison after use
+    # Manage Comparison Plot & Analysis Box
+    comp_plot_update = gr.update()
+    comp_box_update = gr.update() # For the Group (visibility)
+    comp_factors_update = gr.update() # For the Markdown Table (value)
+    
+    final_comp_context = comparison_context_state
+    
+    # Check if we have a pending comparison from a retry
+    if final_comp_context and final_comp_context.get('pending_comparison'):
+        # We are completing a retry. Update the comparison context with CURRENT decisions and stats.
+        
+        final_comp_context['curr_decisions'] = annual_inputs
+        final_comp_context['curr_stats'] = stats
+        final_comp_context['year'] = year - 1 # The year we just simulated
+        final_comp_context['pending_comparison'] = False # Mark as done so we don't re-compare next year
+        
+        # Build comparison text
+        pd = final_comp_context.get('prev_decisions', {})
+        cd = final_comp_context.get('curr_decisions', {})
+        
+        # Factors Table (Markdown)
+        factors_md = f"""
+        | Factor | Previous Attempt | Current Attempt |
+        | :--- | :--- | :--- |
+        | **Spending** | ${pd.get('annual_spending',0):,.0f} | ${cd.get('annual_spending',0):,.0f} |
+        | **Margin** | {'Enabled' if pd.get('enable_margin_investing') else 'Disabled'} | {'Enabled' if cd.get('enable_margin_investing') else 'Disabled'} |
+        | **Buffer** | {pd.get('margin_investing_buffer',0)*100:.1f}% | {cd.get('margin_investing_buffer',0)*100:.1f}% |
+        """
+        
+        comp_box_update = gr.update(visible=True)
+        comp_factors_update = gr.update(value=factors_md)
+        # comp_plot_update stays implicit (no change, so it stays visible)
+        
+    # If no pending comparison, we do nothing to the UI components (allow them to persist if visible)
+    
+    # Return: 
+    # engine, year, status, event_msg, plot, backup, stats (current), comp_plot, comp_box, comp_factors, comp_context
+    return engine, year, status_md, event_msg, fig, backup, stats, comp_plot_update, comp_box_update, comp_factors_update, final_comp_context
 
 def create_empty_plot():
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -413,6 +504,7 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
             backup_engine_state = gr.State() # For Undo
             year_state = gr.State(0)
             last_stats_state = gr.State() # For Comparison
+            comparison_context_state = gr.State() # Store context for Gemini
             
             with gr.Group(visible=True) as game_setup_box:
                 gr.Markdown("### Initial Configuration")
@@ -444,6 +536,18 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
                     with gr.Column(scale=2):
                         live_plot = gr.Plot(label="Current Projection")
                         comparison_plot = gr.Plot(visible=False, label="Previous Attempt")
+                        
+                        with gr.Group(visible=False) as comparison_box:
+                            gr.Markdown("### 🔍 Comparison Analysis")
+                            comparison_factors_md = gr.Markdown() # Table
+                            btn_analyze_diff = gr.Button("✨ Analyze Difference with Gemini", size="sm")
+                            diff_analysis_md = gr.Markdown()
+                            
+                            btn_analyze_diff.click(
+                                analyze_game_diff,
+                                inputs=[gemini_key, comparison_context_state], # Reusing key input from Tab 1
+                                outputs=[diff_analysis_md]
+                            )
             
             btn_start_game.click(
                 init_interactive_mode,
@@ -453,24 +557,24 @@ with gr.Blocks(theme=gr.themes.Soft(), css=".input-card {border-top: 3px solid #
                     margin_rate, margin_rate_std_dev, margin_limit, simulation_count, tax_harvesting_profit_threshold,
                     return_dist_model, return_dist_df, interest_rate_dist_model, interest_rate_dist_df
                 ],
-                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box, backup_engine_state, last_stats_state, comparison_plot]
+                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box, backup_engine_state, last_stats_state, comparison_plot, comparison_box, comparison_context_state]
             )
             
             btn_next_year.click(
                 step_interactive_year,
-                inputs=[engine_state, year_state, cur_spending, cur_margin_enable, cur_margin_buffer, last_stats_state],
-                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot, backup_engine_state, last_stats_state, last_stats_state, comparison_plot] 
+                inputs=[engine_state, year_state, cur_spending, cur_margin_enable, cur_margin_buffer, last_stats_state, comparison_context_state],
+                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot, backup_engine_state, last_stats_state, comparison_plot, comparison_box, comparison_factors_md, comparison_context_state] 
             )
             
             btn_retry.click(
                 retry_last_year,
                 inputs=[backup_engine_state, year_state, last_stats_state, engine_state],
-                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot, backup_engine_state, last_stats_state, comparison_plot]
+                outputs=[engine_state, year_state, game_status_md, game_event_log, live_plot, backup_engine_state, last_stats_state, comparison_plot, comparison_box, comparison_context_state]
             )
             
             btn_reset.click(
                 reset_game,
-                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box, backup_engine_state, last_stats_state, comparison_plot]
+                outputs=[engine_state, year_state, game_container, game_status_md, game_event_log, live_plot, game_setup_box, backup_engine_state, last_stats_state, comparison_plot, comparison_box, comparison_context_state]
             )
 
 if __name__ == "__main__":

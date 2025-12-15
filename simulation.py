@@ -42,6 +42,9 @@ class MonteCarloEngine:
         self.return_distribution_df = inputs.get('return_distribution_df', 5)
         self.interest_rate_distribution_model = inputs.get('interest_rate_distribution_model', 'Normal')
         self.interest_rate_distribution_df = inputs.get('interest_rate_distribution_df', 5)
+        
+        # Track decision history
+        self.decision_history = []
 
     def _get_random_values(self, model, loc, scale, df, size):
         if model == "Student's t":
@@ -62,6 +65,17 @@ class MonteCarloEngine:
         monthly_spending = annual_inputs['annual_spending'] / 12
         enable_margin_investing = annual_inputs.get('enable_margin_investing', False)
         margin_investing_buffer = annual_inputs.get('margin_investing_buffer', 0.10)
+        
+        # Log decision
+        decision_record = {
+            'year': year_index,
+            'annual_spending': annual_inputs['annual_spending'],
+            'enable_margin_investing': enable_margin_investing,
+            'margin_investing_buffer': margin_investing_buffer
+        }
+        # Avoid duplicates if re-running same year (should handle in app logic, but safety first)
+        # Actually, step_year just appends. App logic handles "rewind" by restoring state which has shorter list.
+        self.decision_history.append(decision_record)
         
         monthly_passive_income = self.inputs['monthly_passive_income']
         annual_dividend_yield = self.inputs['annual_dividend_yield']

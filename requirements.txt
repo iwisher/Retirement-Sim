@@ -7,3 +7,4 @@ google-generativeai
 kivy
 kivy-garden.matplotlib
 buildozer
+pytest
